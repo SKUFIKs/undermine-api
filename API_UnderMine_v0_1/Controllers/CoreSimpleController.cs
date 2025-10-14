@@ -35,12 +35,14 @@ public class CoreSimpleController : ControllerBase
             _logger.LogInformation("User {Username} accessed core data", username);
 
             string BASE_URL = "https://www.dropbox.com/scl/fi/";
-            string KEY_URL_SERVER_1 = "xrxzg95onmleug3aylkkp/manifest.json?rlkey=7k7cs5j3lfhn3c4bu4lwh0woc&st=rw896grm&dl=1";
-            string KEY_URL_SERVER_2 = "xrxzg95onmleug3aylkkp/manifest.json?rlkey=7k7cs5j3lfhn3c4bu4lwh0woc&st=rw896grm&dl=1";
+            string KEY_URL_SERVER_1 = "2rjaahqptphugfvmoaovu/manifest.json?rlkey=zsx932cs6ja47dxd6ajw8gmos&st=m55hmjnk&dl=1";
+            string KEY_URL_SERVER_2 = "2rjaahqptphugfvmoaovu/manifest.json?rlkey=zsx932cs6ja47dxd6ajw8gmos&st=m55hmjnk&dl=1";
             string VersionMC1 = "1.20.1";
             string VersionMC2 = "1.20.1";
             string ForgeV1 = "47.4.6";
             string ForgeV2 = "47.4.6";
+            string GuiLink1 = "6o7ysngndi7j56qz7vnwj/fancymenu.zip?rlkey=rpzqq49ym3melv15bbd7ycaac&st=x8m9dslf&dl=1";
+            string GuiHach1 = "992EC0654451ED432FC1FDC3C21B1B51600052DFDACAF40036ABBDB21FEA8C22";
 
             var result = new
             {
@@ -51,7 +53,10 @@ public class CoreSimpleController : ControllerBase
 
                 versionMC2 = VersionMC2,
                 forgeV2 = ForgeV2,
-                manifestLink2 = BASE_URL + KEY_URL_SERVER_2
+                manifestLink2 = BASE_URL + KEY_URL_SERVER_2,
+                GuiLink1 = BASE_URL + GuiLink1,
+                GuiHach1 = GuiHach1
+
             };
 
             return Ok(result);
