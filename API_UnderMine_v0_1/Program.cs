@@ -9,15 +9,7 @@ using Asp.Versioning.ApiExplorer;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Настройка Kestrel для Docker
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.ListenAnyIP(8080); // HTTP
-    options.ListenAnyIP(8081, listenOptions =>
-    {
-        listenOptions.UseHttps("/app/certs/localhost.pfx", "XGNLywaVtQLRCNgGpOeUl4gMRoqmbAWO");
-    });
-});
+// Настройка Kestrel через appsettings.json (не дублируем в коде)
 
 // Контроллеры
 builder.Services.AddControllers();
@@ -30,7 +22,6 @@ builder.Services.AddApiVersioning(options =>
     options.ReportApiVersions = true;
     options.ApiVersionReader = new UrlSegmentApiVersionReader();
 });
-
 builder.Services.AddVersionedApiExplorer(options =>
 {
     options.GroupNameFormat = "'v'VVV";
@@ -73,14 +64,14 @@ var app = builder.Build();
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
 // Проверка подключения к БД при запуске
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated(); // Создаёт базу, если нет
+    db.Database.EnsureCreated();
 }
 
+// Запуск приложения
 app.Run();

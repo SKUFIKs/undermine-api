@@ -16,8 +16,7 @@ RUN dotnet restore "./API_UnderMine_v0_1.csproj"
 # Копируем все остальные файлы проекта
 COPY . .
 
-# Сборка проекта
-RUN dotnet build "./API_UnderMine_v0_1.csproj" -c $BUILD_CONFIGURATION -o /app/build
+# Сборка и публикация
 RUN dotnet publish "./API_UnderMine_v0_1.csproj" -c $BUILD_CONFIGURATION -o /app/publish
 
 # Stage 3: Final
@@ -35,8 +34,5 @@ ENV DOTNET_USE_POLLING_FILE_WATCHER=1
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 ENV DOTNET_CERT_PASSWORD=XGNLywaVtQLRCNgGpOeUl4gMRoqmbAWO
 
-# Порты
-EXPOSE 8080
-EXPOSE 8081
-
+# Запуск
 ENTRYPOINT ["dotnet", "API_UnderMine_v0_1.dll"]
