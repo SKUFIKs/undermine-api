@@ -9,6 +9,16 @@ using Asp.Versioning.ApiExplorer;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Настройка Kestrel для Docker
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenAnyIP(8080); // HTTP
+    options.ListenAnyIP(8081, listenOptions =>
+    {
+        listenOptions.UseHttps("/app/certs/localhost.pfx", "XGNLywaVtQLRCNgGpOeUl4gMRoqmbAWO");
+    });
+});
+
 // Контроллеры
 builder.Services.AddControllers();
 
