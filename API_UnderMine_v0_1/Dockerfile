@@ -27,16 +27,16 @@ WORKDIR /app
 # Копируем сертификаты
 COPY certs /app/certs
 
+# Копируем собранное приложение
 COPY --from=build /app/publish .
 
-# Указываем переменные окружения для Kestrel
+# Переменные окружения
 ENV DOTNET_USE_POLLING_FILE_WATCHER=1
 ENV DOTNET_RUNNING_IN_CONTAINER=true
-ENV DOTNET_CERT_PASSWORD=MyPassword
+ENV DOTNET_CERT_PASSWORD=XGNLywaVtQLRCNgGpOeUl4gMRoqmbAWO
 
-# Порты для HTTP и HTTPS
+# Порты
 EXPOSE 8080
 EXPOSE 8081
 
 ENTRYPOINT ["dotnet", "API_UnderMine_v0_1.dll"]
-
