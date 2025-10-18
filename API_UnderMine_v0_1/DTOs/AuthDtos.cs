@@ -10,7 +10,7 @@ public class AuthResponseDto
 {
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
-    public long UserId { get; set; }  // <--- long вместо int
+    public long UserId { get; set; } 
     public string Login { get; set; } = string.Empty;
 }
 

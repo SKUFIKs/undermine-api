@@ -7,11 +7,11 @@ namespace API_UnderMine_v0_1.Controllers;
 [ApiController]
 [Route("api/v0.1")]
 [Authorize]
-public class CoreSimpleController : ControllerBase
+public class ReceivingServerData : ControllerBase
 {
-    private readonly ILogger<CoreSimpleController> _logger;
+    private readonly ILogger<ReceivingServerData> _logger;
 
-    public CoreSimpleController(ILogger<CoreSimpleController> logger)
+    public ReceivingServerData(ILogger<ReceivingServerData> logger)
     {
         _logger = logger;
     }
