@@ -73,55 +73,6 @@ public class CoreExtendedController : ControllerBase
             });
         }
     }
-
-    [HttpGet("user-info")]
-    [MapToApiVersion("0.1")]
-    [ProducesResponseType(typeof(CoreUserInfoResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
-    public IActionResult GetUserInfo()
-    {
-        try
-        {
-            var username = User.FindFirstValue(ClaimTypes.Name);
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var email = User.FindFirstValue(ClaimTypes.Email);
-
-            if (string.IsNullOrEmpty(username))
-            {
-                return Unauthorized(new ErrorResponse
-                {
-                    ErrorCode = "USER_CLAIM_MISSING",
-                    Message = "User information not found in token"
-                });
-            }
-
-            _logger.LogInformation("User info requested by: {Username}", username);
-
-            return Ok(new CoreUserInfoResponse
-            {
-                Success = true,
-                Message = "User information retrieved successfully",
-                User = new CoreUserInfo
-                {
-                    Username = username,
-                    UserId = userId,
-                    Email = email
-                },
-                IsAuthenticated = true,
-                AuthenticationType = User.Identity?.AuthenticationType,
-                Timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving user info");
-            return StatusCode(500, new ErrorResponse
-            {
-                ErrorCode = "INTERNAL_ERROR",
-                Message = "An error occurred while retrieving user information"
-            });
-        }
-    }
 }
 
 // DTO классы для CoreExtendedController

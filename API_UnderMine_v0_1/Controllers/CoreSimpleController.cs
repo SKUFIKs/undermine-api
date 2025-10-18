@@ -41,8 +41,8 @@ public class CoreSimpleController : ControllerBase
             string VersionMC2 = "1.20.1";
             string ForgeV1 = "47.4.6";
             string ForgeV2 = "47.4.6";
-            string GuiLink1 = "6o7ysngndi7j56qz7vnwj/fancymenu.zip?rlkey=rpzqq49ym3melv15bbd7ycaac&st=x8m9dslf&dl=1";
-            string GuiHach1 = "992EC0654451ED432FC1FDC3C21B1B51600052DFDACAF40036ABBDB21FEA8C22";
+            string ConfLink1 = "c5sboql7cjaj7ipxfidr5/config.zip?rlkey=tx2emfq0kr2vuam8wswlmvjv8&st=gq1y5ji2&dl=1";
+            string GuiHach1 = "1eb8056abf369dfe9957ca4fa8f95aae40799db5fcc2e6e9dced268cd83f0af0-0000014A";
 
             var result = new
             {
@@ -54,8 +54,8 @@ public class CoreSimpleController : ControllerBase
                 versionMC2 = VersionMC2,
                 forgeV2 = ForgeV2,
                 manifestLink2 = BASE_URL + KEY_URL_SERVER_2,
-                GuiLink1 = BASE_URL + GuiLink1,
-                GuiHach1 = GuiHach1
+                ConfLink1 = BASE_URL + ConfLink1,
+                ConfHach1 = GuiHach1
 
             };
 
