@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36401.2 d17.14
+VisualStudioVersion = 17.14.36401.2
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "API_UnderMine_v0_1", "API_UnderMine_v0_1\API_UnderMine_v0_1.csproj", "{7D2B80D4-05F9-480C-A9AF-50F0C65D4534}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "API_UnderMine", "API_UnderMine_v0_1\API_UnderMine.csproj", "{7D2B80D4-05F9-480C-A9AF-50F0C65D4534}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
