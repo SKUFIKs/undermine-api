@@ -12,6 +12,9 @@ public class AuthResponseDto
     public string Message { get; set; } = string.Empty;
     public long UserId { get; set; } 
     public string Login { get; set; } = string.Empty;
+
+    public string ip { get; set; } = string.Empty;
+    public string regip { get; set; } = string.Empty;
 }
 
 
@@ -27,11 +30,4 @@ public class ValidationResponseDto
     public string? UserId { get; set; }
     public string? Username { get; set; }
     public string Message { get; set; } = string.Empty;
-}
-
-public class AuthErrorResponseDto
-{
-    public string ErrorCode { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-    public object? Details { get; set; }
 }

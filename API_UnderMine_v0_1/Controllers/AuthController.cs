@@ -23,7 +23,6 @@ public class AuthController : ControllerBase
         _config = config;
     }
 
-    // 📘 Регистрация
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] AuthRequestDto request)
     {
@@ -34,18 +33,19 @@ public class AuthController : ControllerBase
 
             var lowerName = request.Login.Trim().ToLower();
             var realName = request.Login.Trim();
+            string? ip = HttpContext.Connection.RemoteIpAddress?.ToString();
 
             if (await _context.McAuthAccounts.AnyAsync(u => u.Username == lowerName))
                 return BadRequest(new { message = "User already exists" });
 
-            // Хеширование пароля (AuthMe формат)
             string hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
 
             var user = new McAuthAccount
             {
                 Username = lowerName,
                 RealName = realName,
-                PasswordHash = hashedPassword
+                PasswordHash = hashedPassword,
+                regip = ip
             };
 
             _context.McAuthAccounts.Add(user);
@@ -56,7 +56,7 @@ public class AuthController : ControllerBase
                 Success = true,
                 Message = "User registered successfully",
                 UserId = user.Id,
-                Login = user.RealName
+                Login = user.RealName,
             });
         }
         catch (Exception ex)
@@ -65,7 +65,6 @@ public class AuthController : ControllerBase
         }
     }
 
-    // 🔑 Авторизация
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] AuthRequestDto request)
     {
@@ -79,8 +78,13 @@ public class AuthController : ControllerBase
 
             if (dbUser == null || !BCrypt.Net.BCrypt.Verify(request.Password, dbUser.PasswordHash))
                 return Unauthorized(new { message = "Invalid credentials" });
+            
 
             var token = GenerateJwtToken(dbUser);
+
+            dbUser.ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+            await _context.SaveChangesAsync();
 
             return Ok(new LoginResponseDto
             {
@@ -98,7 +102,6 @@ public class AuthController : ControllerBase
         }
     }
 
-    // ✅ Проверка токена
     [HttpPost("validate-token")]
     public IActionResult ValidateToken([FromHeader] string authorization)
     {
@@ -135,7 +138,6 @@ public class AuthController : ControllerBase
         }
     }
 
-    // 🔒 Генерация JWT токена
     private string GenerateJwtToken(McAuthAccount user)
     {
         var claims = new[]

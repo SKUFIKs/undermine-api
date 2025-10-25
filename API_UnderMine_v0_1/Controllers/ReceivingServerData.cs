@@ -39,10 +39,11 @@ public class ReceivingServerData : ControllerBase
             string KEY_URL_SERVER_2 = "2rjaahqptphugfvmoaovu/manifest.json?rlkey=zsx932cs6ja47dxd6ajw8gmos&st=m55hmjnk&dl=1";
             string VersionMC1 = "1.20.1";
             string VersionMC2 = "1.20.1";
-            string ForgeV1 = "47.4.6";
-            string ForgeV2 = "47.4.6";
+            string ForgeV1 = "47.4.10";
+            string ForgeV2 = "47.4.10";
             string ConfLink1 = "c5sboql7cjaj7ipxfidr5/config.zip?rlkey=tx2emfq0kr2vuam8wswlmvjv8&st=gq1y5ji2&dl=1";
             string GuiHach1 = "1eb8056abf369dfe9957ca4fa8f95aae40799db5fcc2e6e9dced268cd83f0af0-0000014A";
+            string ForgeInstallerLink = "https://www.dropbox.com/scl/fi/7v46159xi9s747q28lfdf/forge-1.20.1-47.4.10-installer.jar?rlkey=n8n9llybm7ry8ihmx5bsfuomf&st=imkq92br&dl=1";
 
             var result = new
             {
@@ -50,13 +51,12 @@ public class ReceivingServerData : ControllerBase
                 versionMC1 = VersionMC1,
                 forgeV1 = ForgeV1,
                 manifestLink1 = BASE_URL + KEY_URL_SERVER_1,
-
+                InstallerLink = ForgeInstallerLink,
                 versionMC2 = VersionMC2,
                 forgeV2 = ForgeV2,
                 manifestLink2 = BASE_URL + KEY_URL_SERVER_2,
                 ConfLink1 = BASE_URL + ConfLink1,
                 ConfHach1 = GuiHach1
-
             };
 
             return Ok(result);

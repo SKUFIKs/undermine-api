@@ -22,5 +22,11 @@ namespace API_UnderMine_v0_1.Models
         [Required]
         [Column("password")]
         public string PasswordHash { get; set; } = string.Empty;
+        [Required]
+        [Column("regip")]
+        public string regip { get; set; } = string.Empty;
+        [Required]
+        [Column("ip")]
+        public string ip { get; set; } = string.Empty;
     }
 }

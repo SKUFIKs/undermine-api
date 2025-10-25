@@ -25,6 +25,12 @@ namespace API_UnderMine_v0_1.Data
 
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.PasswordHash).HasColumnName("password");
+
+            modelBuilder.Entity<McAuthAccount>()
+                .Property(u => u.regip).HasColumnName("regip");
+
+            modelBuilder.Entity<McAuthAccount>()
+                .Property(u => u.ip).HasColumnName("ip");
         }
     }
 }
