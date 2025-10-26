@@ -5,4 +5,7 @@
         public bool IsSuccess { get; set; }
         public string CurrentVersion { get; set; }
     }
+    public class CheckActuallVersion
+    {
+    }
 }
