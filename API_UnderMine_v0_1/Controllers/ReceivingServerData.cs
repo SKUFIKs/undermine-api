@@ -41,8 +41,8 @@ public class ReceivingServerData : ControllerBase
             string VersionMC2 = "1.20.1";
             string ForgeV1 = "47.4.10";
             string ForgeV2 = "47.4.10";
-            string ConfLink1 = "c5sboql7cjaj7ipxfidr5/config.zip?rlkey=tx2emfq0kr2vuam8wswlmvjv8&st=gq1y5ji2&dl=1";
-            string GuiHach1 = "1eb8056abf369dfe9957ca4fa8f95aae40799db5fcc2e6e9dced268cd83f0af0-0000014A";
+            string ConfLink1 = "9663lqv5m5f96uspiv3v5/config.zip?rlkey=o3hj62n2x12cx4jv3qfuv815f&st=5qmwb0d1&dl=1";
+            string GuiHach1 = "74119519F4B3D3BA823D5D6CC78E2953F4E32B3CF72E091D84FDA1BC46E85F1C";
             string ForgeInstallerLink = "https://www.dropbox.com/scl/fi/7v46159xi9s747q28lfdf/forge-1.20.1-47.4.10-installer.jar?rlkey=n8n9llybm7ry8ihmx5bsfuomf&st=imkq92br&dl=1";
 
             var result = new
