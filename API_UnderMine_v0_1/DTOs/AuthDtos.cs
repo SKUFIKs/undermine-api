@@ -13,11 +13,6 @@ public class AuthResponseDto
     public string Message { get; set; } = string.Empty;
     public long UserId { get; set; } 
     public string Login { get; set; } = string.Empty;
-
-    public string ip { get; set; } = string.Empty;
-    public string regip { get; set; } = string.Empty;
-
-    public string deviceId { get; set; } = string.Empty;
 }
 
 
