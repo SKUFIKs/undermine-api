@@ -42,9 +42,9 @@ public class ReceivingServerData : ControllerBase
             string VersionMC2 = "-";
             string ForgeV1 = "47.4.10";
             string ForgeV2 = "-";
-            string QuestLink = "https://www.dropbox.com/scl/fi/65r7jq4bjcfobfzs7r4rg/ftbquests.zip?rlkey=8f7fmq9zxabqxe4lr39rxkgk8&st=jkzm7w3c&dl=1";
-            string GuiLink = "https://www.dropbox.com/scl/fi/8vnww2gdv20ephot2ofpq/fancymenu.zip?rlkey=e4efg0o91d8nrjcth8s5xoo4y&st=wcv8vvag&dl=1";
-            string ShadersLink = "https://www.dropbox.com/scl/fi/19fwnrlnmr8vfc4lkprnm/shaderpacks.zip?rlkey=c6igrdodw11x0vjct2zo8ckjp&st=76h9pas6&dl=1";
+            string QuestLink = "65r7jq4bjcfobfzs7r4rg/ftbquests.zip?rlkey=8f7fmq9zxabqxe4lr39rxkgk8&st=jkzm7w3c&dl=1";
+            string GuiLink = "8vnww2gdv20ephot2ofpq/fancymenu.zip?rlkey=e4efg0o91d8nrjcth8s5xoo4y&st=wcv8vvag&dl=1";
+            string ShadersLink = "19fwnrlnmr8vfc4lkprnm/shaderpacks.zip?rlkey=c6igrdodw11x0vjct2zo8ckjp&st=76h9pas6&dl=1";
 
             string ForgeInstallerLink = "7v46159xi9s747q28lfdf/forge-1.20.1-47.4.10-installer.jar?rlkey=n8n9llybm7ry8ihmx5bsfuomf&st=imkq92br&dl=1";
 
