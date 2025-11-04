@@ -31,6 +31,10 @@ namespace API_UnderMine_v0_1.Data
 
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.ip).HasColumnName("ip");
+
+            modelBuilder.Entity<McAuthAccount>()
+                .Property(u => u.deviceId).HasColumnName("device_id");
+
         }
     }
 }

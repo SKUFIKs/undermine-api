@@ -4,6 +4,7 @@ public class AuthRequestDto
 {
     public string Login { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+    public string deviceID { get; set; } = string.Empty;
 }
 
 public class AuthResponseDto
@@ -15,6 +16,8 @@ public class AuthResponseDto
 
     public string ip { get; set; } = string.Empty;
     public string regip { get; set; } = string.Empty;
+
+    public string deviceId { get; set; } = string.Empty;
 }
 
 

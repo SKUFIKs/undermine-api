@@ -28,15 +28,42 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
-                return BadRequest(new { message = "Login and password are required" });
+            const int MaxAccountsPerDevice = 3;
 
+            if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
+                return BadRequest(new
+                {
+                    status = 400,
+                    message = "Login and password are required"
+                });
+
+            if (string.IsNullOrWhiteSpace(request.deviceID))
+                return BadRequest(new
+                {
+                    status = 400,
+                    message = "Failed to get device ID"
+                });
+
+            var deviceId = request.deviceID;
             var lowerName = request.Login.Trim().ToLower();
             var realName = request.Login.Trim();
             string? ip = HttpContext.Connection.RemoteIpAddress?.ToString();
 
             if (await _context.McAuthAccounts.AnyAsync(u => u.Username == lowerName))
-                return BadRequest(new { message = "User already exists" });
+                return Conflict(new
+                {
+                    status = 409,
+                    message = "User already exists"
+                });
+
+            int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u=>u.deviceId==deviceId || u.regip==ip);
+
+            if (accountCountForDevice >= MaxAccountsPerDevice)
+                return StatusCode(StatusCodes.Status429TooManyRequests, new
+                {
+                    status = 429,
+                    message = "Device has reached account limit"
+                });
 
             string hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
 
@@ -45,7 +72,8 @@ public class AuthController : ControllerBase
                 Username = lowerName,
                 RealName = realName,
                 PasswordHash = hashedPassword,
-                regip = ip
+                regip = ip,
+                deviceId = deviceId
             };
 
             _context.McAuthAccounts.Add(user);
@@ -71,19 +99,36 @@ public class AuthController : ControllerBase
         try
         {
             if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
-                return BadRequest(new { message = "Login and password are required" });
+                return BadRequest(new
+                {
+                    status = 400,
+                    message = "Login and password are required"
+                });
+
+            string? ip = HttpContext.Connection.RemoteIpAddress?.ToString();
 
             var lowerName = request.Login.Trim().ToLower();
+
             var dbUser = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Username == lowerName);
 
-            if (dbUser == null || !BCrypt.Net.BCrypt.Verify(request.Password, dbUser.PasswordHash))
-                return Unauthorized(new { message = "Invalid credentials" });
-            
+            if (dbUser == null)
+                return Unauthorized(new
+                {
+                    status = 401,
+                    message = "Invalid credentials"
+                });
+
+            if (!BCrypt.Net.BCrypt.Verify(request.Password, dbUser.PasswordHash))
+                return Unauthorized(new
+                {
+                    status = 401,
+                    message = "Invalid credentials"
+                });
+
 
             var token = GenerateJwtToken(dbUser);
 
-            dbUser.ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-
+            dbUser.ip = ip;
             await _context.SaveChangesAsync();
 
             return Ok(new LoginResponseDto
@@ -91,16 +136,22 @@ public class AuthController : ControllerBase
                 Success = true,
                 Message = "Login successful",
                 Token = token,
-                ExpiresIn = 7200,
+                ExpiresIn = 300,
                 UserId = dbUser.Id,
                 Login = dbUser.RealName
             });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Internal error", error = ex.Message });
+            return StatusCode(500, new
+            {
+                status = 500,
+                message = "Internal error",
+                error = ex.Message
+            });
         }
     }
+
 
     [HttpPost("validate-token")]
     public IActionResult ValidateToken([FromHeader] string authorization)
@@ -155,7 +206,7 @@ public class AuthController : ControllerBase
             issuer: _config["Jwt:Issuer"],
             audience: _config["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(2),
+            expires: DateTime.UtcNow.AddMinutes(5),
             signingCredentials: creds
         );
 

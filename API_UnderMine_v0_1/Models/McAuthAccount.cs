@@ -28,5 +28,8 @@ namespace API_UnderMine_v0_1.Models
         [Required]
         [Column("ip")]
         public string ip { get; set; } = string.Empty;
+        [Required]
+        [Column("device_id")]
+        public string deviceId { get; set; } = string.Empty;
     }
 }
