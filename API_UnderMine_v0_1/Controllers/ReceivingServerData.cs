@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
@@ -42,8 +43,8 @@ public class ReceivingServerData : ControllerBase
             string VersionMC2 = "-";
             string ForgeV1 = "47.4.10";
             string ForgeV2 = "-";
-            string QuestLink = "65r7jq4bjcfobfzs7r4rg/ftbquests.zip?rlkey=8f7fmq9zxabqxe4lr39rxkgk8&st=jkzm7w3c&dl=1";
-            string GuiLink = "wyg8n1qijq8v83yhtkml6/fancymenu.zip?rlkey=dki3xakpepw6j4htrb87m4ro9&st=gl9n91q6&dl=1";
+            string ConfLink = "7ug9juz89zp502kgigypy/config.zip?rlkey=lmwlcmi2cufruud76dvphgthf&st=x4wfhb15&dl=1";
+            string KubejsLink = "fope6ubzkliins6fsgnu2/kubjes.zip?rlkey=jokt54vznecai3zni7q0jovw3&st=39c0cv58&dl=1";
             string ShadersLink = "19fwnrlnmr8vfc4lkprnm/shaderpacks.zip?rlkey=c6igrdodw11x0vjct2zo8ckjp&st=76h9pas6&dl=1";
 
             string ForgeInstallerLink = "7v46159xi9s747q28lfdf/forge-1.20.1-47.4.10-installer.jar?rlkey=n8n9llybm7ry8ihmx5bsfuomf&st=imkq92br&dl=1";
@@ -55,8 +56,8 @@ public class ReceivingServerData : ControllerBase
                 forgeV1 = ForgeV1,
                 manifestLink1 = BASE_URL_DROPBOX + SERVER_1,
                 InstallerLink = BASE_URL_DROPBOX + ForgeInstallerLink,
-                QuestLink = BASE_URL_DROPBOX + QuestLink,
-                GuiLink = BASE_URL_DROPBOX + GuiLink,
+                ConfLink = BASE_URL_DROPBOX + ConfLink,
+                KubejsLink = BASE_URL_DROPBOX + KubejsLink,
                 ShadersLink = BASE_URL_DROPBOX + ShadersLink,
                 versionMC2 = VersionMC2,
                 forgeV2 =  ForgeV2,
