@@ -43,8 +43,8 @@ public class ReceivingServerData : ControllerBase
             string VersionMC2 = "-";
             string ForgeV1 = "47.4.10";
             string ForgeV2 = "-";
-            string ConfLink = "7ug9juz89zp502kgigypy/config.zip?rlkey=lmwlcmi2cufruud76dvphgthf&st=x4wfhb15&dl=1";
-            string KubejsLink = "fope6ubzkliins6fsgnu2/kubjes.zip?rlkey=jokt54vznecai3zni7q0jovw3&st=39c0cv58&dl=1";
+            string ConfLink = "xh871gz6kbvobmx0ec2ri/config.zip?rlkey=uupfrmr31nzf81rgn4sr9yio7&st=qzs9ofms&dl=1";
+            string KubejsLink = "vukyaymbdvuflc92x7jdh/kubejs.zip?rlkey=fp6a6uef04wkdztz47r4w4opg&st=nsl6cekb&dl=1";
             string ShadersLink = "19fwnrlnmr8vfc4lkprnm/shaderpacks.zip?rlkey=c6igrdodw11x0vjct2zo8ckjp&st=76h9pas6&dl=1";
 
             string ForgeInstallerLink = "7v46159xi9s747q28lfdf/forge-1.20.1-47.4.10-installer.jar?rlkey=n8n9llybm7ry8ihmx5bsfuomf&st=imkq92br&dl=1";
