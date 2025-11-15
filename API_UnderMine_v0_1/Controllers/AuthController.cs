@@ -1,6 +1,7 @@
 ﻿using API_UnderMine_v0_1.Data;
 using API_UnderMine_v0_1.DTOs;
 using API_UnderMine_v0_1.Models;
+using API_UnderMine_v0_1.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -16,11 +17,15 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IConfiguration _config;
+    private readonly ILogger<AuthController> _logger;
+    private readonly IJwtService _jwtService;
 
-    public AuthController(AppDbContext context, IConfiguration config)
+    public AuthController(AppDbContext context, IConfiguration config, ILogger<AuthController> logger, IJwtService jwtService)
     {
         _context = context;
         _config = config;
+        _logger = logger;
+        _jwtService = jwtService;
     }
 
     [HttpPost("register")]
@@ -30,24 +35,20 @@ public class AuthController : ControllerBase
         {
             const int MaxAccountsPerDevice = 3;
 
-            if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
-                return BadRequest(new
-                {
-                    status = 400,
-                    message = "Login and password are required"
-                });
+            if (!ModelState.IsValid)
+                return BadRequest(new { status = 400, message = "Invalid request data" });
 
-            if (string.IsNullOrWhiteSpace(request.deviceID))
+            if (string.IsNullOrWhiteSpace(request.DeviceId))
                 return BadRequest(new
                 {
                     status = 400,
                     message = "Failed to get device ID"
                 });
 
-            var deviceId = request.deviceID;
-            var lowerName = request.Login.Trim().ToLower();
+            var deviceId = request.DeviceId.Trim();
+            var lowerName = request.Login.Trim().ToLowerInvariant();
             var realName = request.Login.Trim();
-            string? ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
 
             if (await _context.McAuthAccounts.AnyAsync(u => u.Username == lowerName))
                 return Conflict(new
@@ -56,7 +57,7 @@ public class AuthController : ControllerBase
                     message = "User already exists"
                 });
 
-            int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u=>u.deviceId==deviceId || u.regip==ip);
+            int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u => u.deviceId == deviceId || u.regip == ip);
 
             if (accountCountForDevice >= MaxAccountsPerDevice)
                 return StatusCode(StatusCodes.Status429TooManyRequests, new
@@ -89,7 +90,8 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Internal error", error = ex.Message });
+            _logger.LogError(ex, "Error during register");
+            return StatusCode(500, new { message = "Internal server error" });
         }
     }
 
@@ -98,16 +100,12 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
-                return BadRequest(new
-                {
-                    status = 400,
-                    message = "Login and password are required"
-                });
+            if (!ModelState.IsValid)
+                return BadRequest(new { status = 400, message = "Invalid request data" });
 
-            string? ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
 
-            var lowerName = request.Login.Trim().ToLower();
+            var lowerName = request.Login.Trim().ToLowerInvariant();
 
             var dbUser = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Username == lowerName);
 
@@ -125,8 +123,7 @@ public class AuthController : ControllerBase
                     message = "Invalid credentials"
                 });
 
-
-            var token = GenerateJwtToken(dbUser);
+            var token = _jwtService.GenerateToken(dbUser);
 
             dbUser.ip = ip;
             await _context.SaveChangesAsync();
@@ -143,18 +140,18 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Error during login");
             return StatusCode(500, new
             {
                 status = 500,
-                message = "Internal error",
-                error = ex.Message
+                message = "Internal server error"
             });
         }
     }
 
 
     [HttpPost("validate-token")]
-    public IActionResult ValidateToken([FromHeader] string authorization)
+    public IActionResult ValidateToken([FromHeader(Name = "Authorization")] string authorization)
     {
         try
         {
@@ -162,20 +159,8 @@ public class AuthController : ControllerBase
                 return Unauthorized(new { message = "Bearer token required" });
 
             var token = authorization.Substring("Bearer ".Length).Trim();
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]!);
 
-            tokenHandler.ValidateToken(token, new TokenValidationParameters
-            {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateIssuer = true,
-                ValidIssuer = _config["Jwt:Issuer"],
-                ValidateAudience = true,
-                ValidAudience = _config["Jwt:Audience"],
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.Zero
-            }, out _);
+            _jwtService.ValidateToken(token);
 
             return Ok(new ValidationResponseDto
             {
@@ -183,33 +168,10 @@ public class AuthController : ControllerBase
                 Message = "Token is valid"
             });
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Invalid token validation attempt");
             return Unauthorized(new { message = "Invalid or expired token" });
         }
-    }
-
-    private string GenerateJwtToken(McAuthAccount user)
-    {
-        var claims = new[]
-        {
-            new Claim(ClaimTypes.Name, user.RealName),
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())
-        };
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],
-            audience: _config["Jwt:Audience"],
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(5),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }

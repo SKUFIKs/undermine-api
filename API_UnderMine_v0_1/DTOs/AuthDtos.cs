@@ -1,10 +1,19 @@
 ﻿namespace API_UnderMine_v0_1.DTOs;
 
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
+
 public class AuthRequestDto
 {
+    [Required]
     public string Login { get; set; } = string.Empty;
+
+    [Required]
     public string Password { get; set; } = string.Empty;
-    public string deviceID { get; set; } = string.Empty;
+
+    [Required]
+    [JsonPropertyName("deviceID")]
+    public string DeviceId { get; set; } = string.Empty;
 }
 
 public class AuthResponseDto
