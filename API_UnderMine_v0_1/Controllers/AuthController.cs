@@ -33,7 +33,8 @@ public class AuthController : ControllerBase
     {
         try
         {
-            const int MaxAccountsPerDevice = 3;
+            const int MaxAccountsPerDevice = 2;
+            const int MaxAccountsPerId = 4;
 
             if (!ModelState.IsValid)
                 return BadRequest(new { status = 400, message = "Invalid request data" });
@@ -58,8 +59,9 @@ public class AuthController : ControllerBase
                 });
 
             int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u => u.deviceId == deviceId || u.regip == ip);
+            int accountCountForIp = await _context.McAuthAccounts.CountAsync(u => u.regip == ip);
 
-            if (accountCountForDevice >= MaxAccountsPerDevice)
+            if (accountCountForDevice >= MaxAccountsPerDevice || accountCountForIp >= MaxAccountsPerId)
                 return StatusCode(StatusCodes.Status429TooManyRequests, new
                 {
                     status = 429,
