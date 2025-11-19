@@ -1,6 +1,5 @@
-using API_UnderMine_v0_1.Data;
-using API_UnderMine_v0_1.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Versioning;
 using Microsoft.EntityFrameworkCore;
@@ -10,27 +9,35 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownProxies.Add(System.Net.IPAddress.Parse("127.0.0.1"));
+});
+
 builder.Services.AddRateLimiter(options =>
 {
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
     {
+    
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: ip,
             factory: _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5,             // Максимум 5 запросов
-                Window = TimeSpan.FromSeconds(10), // В течение 10 секунд
+                PermitLimit = 5,                    // РњР°РєСЃРёРјСѓРј 5 Р·Р°РїСЂРѕСЃРѕРІ
+                Window = TimeSpan.FromSeconds(10),  // РќР° РѕРєРЅРѕ 10 СЃРµРєСѓРЅРґ
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 0               
+                QueueLimit = 0
             });
     });
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
-
 builder.Services.AddControllers();
+
 builder.Services.AddApiVersioning(options =>
 {
     options.DefaultApiVersion = new ApiVersion(0, 1);
@@ -38,6 +45,7 @@ builder.Services.AddApiVersioning(options =>
     options.ReportApiVersions = true;
     options.ApiVersionReader = new UrlSegmentApiVersionReader();
 });
+
 builder.Services.AddVersionedApiExplorer(options =>
 {
     options.GroupNameFormat = "'v'VVV";
@@ -48,7 +56,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<IJwtService, JwtService>();
-
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -75,6 +82,9 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
+
+app.UseRateLimiter();
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
