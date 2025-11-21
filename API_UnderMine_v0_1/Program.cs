@@ -1,7 +1,6 @@
 using API_UnderMine_v0_1.Data;
 using API_UnderMine_v0_1.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Versioning;
 using Microsoft.EntityFrameworkCore;
@@ -11,16 +10,6 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-builder.Services.Configure<ForwardedHeadersOptions>(options =>
-{
-    options.ForwardedHeaders =
-        ForwardedHeaders.XForwardedFor |
-        ForwardedHeaders.XForwardedProto;
-
-    options.KnownNetworks.Clear();
-    options.KnownProxies.Clear();
-});
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -88,8 +77,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-app.UseForwardedHeaders();
-app.UseRateLimiter();
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
