@@ -14,10 +14,8 @@ namespace API_UnderMine.Controllers
 
             return Ok(new
             {
-                // Какой IP видит ASP.NET после всех обработок
                 ResolvedRemoteIp = connection.RemoteIpAddress?.ToString(),
 
-                // Сырые заголовки (здесь мы ищем реальный IP)
                 Headers = headers.ToDictionary(h => h.Key, h => h.Value.ToString())
             });
         }

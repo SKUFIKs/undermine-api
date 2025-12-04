@@ -1,5 +1,6 @@
 ﻿using API_UnderMine_v0_1.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace API_UnderMine_v0_1.Data
 {
@@ -16,24 +17,22 @@ namespace API_UnderMine_v0_1.Data
             modelBuilder.Entity<McAuthAccount>()
                 .ToTable("authme")
                 .HasKey(u => u.Id);
-
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.Username).HasColumnName("username");
-
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.RealName).HasColumnName("realname");
-
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.PasswordHash).HasColumnName("password");
-
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.regip).HasColumnName("regip");
-
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.ip).HasColumnName("ip");
-
             modelBuilder.Entity<McAuthAccount>()
-                .Property(u => u.deviceId).HasColumnName("device_id");
+                .Property(u => u.regTime).HasColumnName("reg_time");
+            modelBuilder.Entity<McAuthAccount>()
+                .Property(u => u.logTime).HasColumnName("lastlog_time");
+            modelBuilder.Entity<McAuthAccount>()
+                .Property(u => u.IsBanned).HasColumnName("IsBanned");
 
         }
     }

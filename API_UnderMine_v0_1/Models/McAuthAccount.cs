@@ -31,5 +31,14 @@ namespace API_UnderMine_v0_1.Models
         [Required]
         [Column("device_id")]
         public string deviceId { get; set; } = string.Empty;
+        [Required]
+        [Column("reg_time")]
+        public string regTime { get; set; } = string.Empty;
+        [Required]
+        [Column("log_time")]
+        public string logTime { get; set; } = string.Empty;
+        [Required]
+        [Column("IsBanned")]
+        public bool IsBanned { get; set; } = false;
     }
 }

@@ -76,7 +76,9 @@ public class AuthController : ControllerBase
                 RealName = realName,
                 PasswordHash = hashedPassword,
                 regip = ip,
-                deviceId = deviceId
+                deviceId = deviceId,
+                regTime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"),
+                IsBanned = false
             };
 
             _context.McAuthAccounts.Add(user);
@@ -106,11 +108,12 @@ public class AuthController : ControllerBase
                 return BadRequest(new { status = 400, message = "Invalid request data" });
 
             string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+            string logtime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm");
 
             var lowerName = request.Login.Trim().ToLowerInvariant();
 
             var dbUser = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Username == lowerName);
-
+            
             if (dbUser == null)
                 return Unauthorized(new
                 {
@@ -124,10 +127,18 @@ public class AuthController : ControllerBase
                     status = 401,
                     message = "Invalid credentials"
                 });
+            if (dbUser.IsBanned)
+                return Unauthorized(new
+                {
+                    status = 410,
+                    message = "Your account is banned!"
+                });
 
             var token = _jwtService.GenerateToken(dbUser);
 
             dbUser.ip = ip;
+            dbUser.logTime = logtime;
+
             await _context.SaveChangesAsync();
 
             return Ok(new LoginResponseDto
