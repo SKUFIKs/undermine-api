@@ -77,7 +77,7 @@ public class AuthController : ControllerBase
                 PasswordHash = hashedPassword,
                 regip = ip,
                 deviceId = deviceId,
-                regTime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"),
+                regTime = DateTime.UtcNow,
                 IsBanned = false
             };
 
@@ -108,7 +108,7 @@ public class AuthController : ControllerBase
                 return BadRequest(new { status = 400, message = "Invalid request data" });
 
             string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
-            string logtime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm");
+            
 
             var lowerName = request.Login.Trim().ToLowerInvariant();
 
@@ -137,7 +137,7 @@ public class AuthController : ControllerBase
             var token = _jwtService.GenerateToken(dbUser);
 
             dbUser.ip = ip;
-            dbUser.logTime = logtime;
+            dbUser.logTime = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 

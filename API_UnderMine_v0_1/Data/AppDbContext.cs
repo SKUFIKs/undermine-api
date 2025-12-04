@@ -30,7 +30,7 @@ namespace API_UnderMine_v0_1.Data
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.regTime).HasColumnName("reg_time");
             modelBuilder.Entity<McAuthAccount>()
-                .Property(u => u.logTime).HasColumnName("lastlog_time");
+                .Property(u => u.logTime).HasColumnName("log_time"); 
             modelBuilder.Entity<McAuthAccount>()
                 .Property(u => u.IsBanned).HasColumnName("IsBanned");
 

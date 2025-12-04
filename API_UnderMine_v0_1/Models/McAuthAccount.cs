@@ -33,10 +33,10 @@ namespace API_UnderMine_v0_1.Models
         public string deviceId { get; set; } = string.Empty;
         [Required]
         [Column("reg_time")]
-        public string regTime { get; set; } = string.Empty;
+        public DateTime regTime { get; set; } = DateTime.UtcNow;
         [Required]
         [Column("log_time")]
-        public string logTime { get; set; } = string.Empty;
+        public DateTime logTime { get; set; } = DateTime.UtcNow;
         [Required]
         [Column("IsBanned")]
         public bool IsBanned { get; set; } = false;
