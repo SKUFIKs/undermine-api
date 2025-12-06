@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace API_UnderMine_v0_1.Models
 {
-    [Table("authme")]
+    [Table("authmeplugin")]
     public class McAuthAccount
     {
         [Key]
@@ -32,11 +32,11 @@ namespace API_UnderMine_v0_1.Models
         [Column("device_id")]
         public string deviceId { get; set; } = string.Empty;
         [Required]
-        [Column("reg_time")]
-        public DateTime regTime { get; set; } = DateTime.UtcNow;
+        [Column("regdate")]
+        public long regTime { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         [Required]
-        [Column("log_time")]
-        public DateTime logTime { get; set; } = DateTime.UtcNow;
+        [Column("lastlogin")]
+        public long logTime { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         [Required]
         [Column("IsBanned")]
         public bool IsBanned { get; set; } = false;

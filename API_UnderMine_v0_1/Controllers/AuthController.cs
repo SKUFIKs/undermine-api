@@ -77,7 +77,8 @@ public class AuthController : ControllerBase
                 PasswordHash = hashedPassword,
                 regip = ip,
                 deviceId = deviceId,
-                regTime = DateTime.UtcNow,
+                regTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+               
                 IsBanned = false
             };
 
@@ -137,7 +138,7 @@ public class AuthController : ControllerBase
             var token = _jwtService.GenerateToken(dbUser);
 
             dbUser.ip = ip;
-            dbUser.logTime = DateTime.UtcNow;
+            dbUser.logTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
             await _context.SaveChangesAsync();
 
