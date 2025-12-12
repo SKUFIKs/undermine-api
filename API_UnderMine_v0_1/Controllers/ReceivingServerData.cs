@@ -36,7 +36,7 @@ public class ReceivingServerData : ControllerBase
             _logger.LogInformation("User {Username} accessed core data", username);
 
             string BASE_URL_DROPBOX = "https://www.dropbox.com/scl/fi/";
-            string BASE_URL_YANDEX = "https://s1224sas.storage.yandex.net/rdisk/";
+            
             string SERVER_1 = "2rjaahqptphugfvmoaovu/manifest.json?rlkey=zsx932cs6ja47dxd6ajw8gmos&st=m55hmjnk&dl=1";
             string SERVER_2 = "-";
             string VersionMC1 = "1.20.1";

@@ -4,10 +4,6 @@ using API_UnderMine_v0_1.Models;
 using API_UnderMine_v0_1.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 
 namespace API_UnderMine_v0_1.Controllers;
 
@@ -37,13 +33,13 @@ public class AuthController : ControllerBase
             const int MaxAccountsPerId = 4;
 
             if (!ModelState.IsValid)
-                return BadRequest(new { status = 400, message = "Invalid request data" });
+                return BadRequest(new { status = 400, message = "Ошибка запроса" });
 
             if (string.IsNullOrWhiteSpace(request.DeviceId))
                 return BadRequest(new
                 {
                     status = 400,
-                    message = "Failed to get device ID"
+                    message = "Ошибка получения ID устройства!"
                 });
 
             var deviceId = request.DeviceId.Trim();
@@ -55,17 +51,17 @@ public class AuthController : ControllerBase
                 return Conflict(new
                 {
                     status = 409,
-                    message = "User already exists"
+                    message = "Пользователь уже существует!"
                 });
 
-            int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u => u.deviceId == deviceId || u.regip == ip);
-            int accountCountForIp = await _context.McAuthAccounts.CountAsync(u => u.regip == ip);
+            int accountCountForDevice = await _context.McAuthAccounts.CountAsync(u => u.DeviceId == deviceId || u.RegIp == ip);
+            int accountCountForIp = await _context.McAuthAccounts.CountAsync(u => u.RegIp == ip);
 
             if (accountCountForDevice >= MaxAccountsPerDevice || accountCountForIp >= MaxAccountsPerId)
                 return StatusCode(StatusCodes.Status429TooManyRequests, new
                 {
                     status = 429,
-                    message = "Device has reached account limit"
+                    message = "Превышен лимит аккаунтов на устройство!"
                 });
 
             string hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
@@ -74,11 +70,11 @@ public class AuthController : ControllerBase
             {
                 Username = lowerName,
                 RealName = realName,
-                PasswordHash = hashedPassword,
-                regip = ip,
-                deviceId = deviceId,
-                regTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-               
+                Password = hashedPassword,
+                RegIp = ip,       
+                DeviceId = deviceId, 
+                RegDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), 
+
                 IsBanned = false
             };
 
@@ -88,15 +84,15 @@ public class AuthController : ControllerBase
             return Ok(new AuthResponseDto
             {
                 Success = true,
-                Message = "User registered successfully",
+                Message = "Успешная регистрация пользователя!",
                 UserId = user.Id,
                 Login = user.RealName,
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during register");
-            return StatusCode(500, new { message = "Internal server error" });
+            _logger.LogError(ex, "Ошибка регистрации!");
+            return StatusCode(500, new { message = "Сервер не доступен" });
         }
     }
 
@@ -106,46 +102,49 @@ public class AuthController : ControllerBase
         try
         {
             if (!ModelState.IsValid)
-                return BadRequest(new { status = 400, message = "Invalid request data" });
+                return BadRequest(new { status = 400, message = "Ошибка запросa" });
 
             string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
-            
 
             var lowerName = request.Login.Trim().ToLowerInvariant();
 
             var dbUser = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Username == lowerName);
-            
+
             if (dbUser == null)
                 return Unauthorized(new
                 {
                     status = 401,
-                    message = "Invalid credentials"
+                    message = "Пользователь не найден"
                 });
 
-            if (!BCrypt.Net.BCrypt.Verify(request.Password, dbUser.PasswordHash))
+            if (!BCrypt.Net.BCrypt.Verify(request.Password, dbUser.Password))
                 return Unauthorized(new
                 {
                     status = 401,
-                    message = "Invalid credentials"
+                    message = "Неверный логин или пароль!"
                 });
-            if (dbUser.IsBanned)
+
+            if (dbUser.IsBanned == true)
+            {
                 return Unauthorized(new
                 {
                     status = 410,
-                    message = "Your account is banned!"
+                    message = "Твой аккаунт забанен!"
                 });
+            }
 
             var token = _jwtService.GenerateToken(dbUser);
 
-            dbUser.ip = ip;
-            dbUser.logTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            dbUser.Ip = ip;
+            dbUser.LastLogin = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            dbUser.HasSession = 1;
 
             await _context.SaveChangesAsync();
 
             return Ok(new LoginResponseDto
             {
                 Success = true,
-                Message = "Login successful",
+                Message = "Успешная авторизация",
                 Token = token,
                 ExpiresIn = 300,
                 UserId = dbUser.Id,
@@ -154,11 +153,11 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during login");
+            _logger.LogError(ex, "Ошибка авторизации!");
             return StatusCode(500, new
             {
                 status = 500,
-                message = "Internal server error"
+                message = "Сервер не доступен"
             });
         }
     }
