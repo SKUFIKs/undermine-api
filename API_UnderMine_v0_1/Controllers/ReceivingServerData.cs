@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using API_UnderMine.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -11,12 +12,13 @@ namespace API_UnderMine_v0_1.Controllers;
 public class ReceivingServerData : ControllerBase
 {
     private readonly ILogger<ReceivingServerData> _logger;
+    private readonly ConfigCacheService _cache;
 
-    public ReceivingServerData(ILogger<ReceivingServerData> logger)
+    public ReceivingServerData(ILogger<ReceivingServerData> logger, ConfigCacheService cache)
     {
         _logger = logger;
+        _cache = cache;
     }
-
     [HttpGet("server_info")]
     public IActionResult GetData()
     {
@@ -36,7 +38,7 @@ public class ReceivingServerData : ControllerBase
             _logger.LogInformation("User {Username} accessed core data", username);
 
             string BASE_URL_DROPBOX = "https://www.dropbox.com/scl/fi/";
-            
+
             string SERVER_1 = "2rjaahqptphugfvmoaovu/manifest.json?rlkey=zsx932cs6ja47dxd6ajw8gmos&st=m55hmjnk&dl=1";
             string SERVER_2 = "-";
             string VersionMC1 = "1.20.1";
@@ -60,7 +62,7 @@ public class ReceivingServerData : ControllerBase
                 KubejsLink = BASE_URL_DROPBOX + KubejsLink,
                 ShadersLink = BASE_URL_DROPBOX + ShadersLink,
                 versionMC2 = VersionMC2,
-                forgeV2 =  ForgeV2,
+                forgeV2 = ForgeV2,
                 manifestLink2 = BASE_URL_DROPBOX + SERVER_2,
 
             };
@@ -75,6 +77,48 @@ public class ReceivingServerData : ControllerBase
                 Error = "INTERNAL_ERROR",
                 Message = "An error occurred while processing your request"
             });
+        }
+    }
+    [HttpGet("TechnoMagic")]
+    public IActionResult GetNewData()
+    {
+        try
+        {
+            var username = User.FindFirstValue(ClaimTypes.Name);
+            if (string.IsNullOrEmpty(username))
+            {
+                _logger.LogWarning("Unauthorized access attempt to server_info endpoint.");
+                return Unauthorized(new { error = "UNAUTHORIZED", message = "User not authenticated" });
+            }
+
+            var config = _cache.CachedConfig;
+
+            if (config == null)
+            {
+                return StatusCode(503, "Config is not loaded yet. Please try again in a minute.");
+            }
+
+            return Ok(new
+            {
+                username,
+                version = config.Version,
+                forge = config.ForgeVersion,
+                manifestLink = config.ManifestLink,
+                installerLink = config.InstallLink,
+                confLink = config.ConfLink,
+                kubejsLink = config.KubejsLink,
+                shadersLink = config.ShadersLink,
+                libraryExpectedChecksum = config.LibraryExpectedChecksum,
+                versionExpectedChecksum = config.VersionExpectedChecksum,
+                assetsExpectedChecksum = config.AssetsExpectedChecksum,
+                uiVersion = config.UiVersion,
+                clientLink = config.ClientLink
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetData");
+            return StatusCode(500, new { Error = "INTERNAL_ERROR" });
         }
     }
 }

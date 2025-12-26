@@ -1,4 +1,5 @@
-﻿using API_UnderMine_v0_1.Models;
+﻿using API_UnderMine.Models;
+using API_UnderMine_v0_1.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace API_UnderMine_v0_1.Data
@@ -8,12 +9,12 @@ namespace API_UnderMine_v0_1.Data
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<McAuthAccount> McAuthAccounts => Set<McAuthAccount>();
+        public DbSet<CoreData> CoreDatas => Set<CoreData>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
 
-            // Основная настройка таблицы
             modelBuilder.Entity<McAuthAccount>(entity =>
             {
                 entity.ToTable("authmeplugin");
@@ -60,6 +61,65 @@ namespace API_UnderMine_v0_1.Data
 
                 entity.Property(e => e.IsBanned)
                       .HasDefaultValue(false);
+            });
+            modelBuilder.Entity<CoreData>(entity =>
+            {
+                entity.ToTable("config");
+
+                // Указываем имена колонок точно так, как в твоем CREATE TABLE
+                entity.HasKey(e => e.Id).HasName("config_pkey");
+                entity.Property(e => e.Id).HasColumnName("id");
+
+                entity.Property(e => e.Version)
+                      .HasColumnName("version") // в SQL было "version"
+                      .HasMaxLength(25)
+                      .HasDefaultValue("NULL");
+
+                entity.Property(e => e.ForgeVersion)
+                      .HasColumnName("forge") // в SQL было "forge"
+                      .HasMaxLength(25)
+                      .HasDefaultValue("NULL");
+
+                entity.Property(e => e.InstallLink)
+                      .HasColumnName("installLink") // в SQL было "installLink"
+                      .HasMaxLength(256)
+                      .HasDefaultValue("NULL");
+
+                entity.Property(e => e.ConfLink)
+                      .HasColumnName("confLink")
+                      .HasMaxLength(256);
+
+                entity.Property(e => e.KubejsLink)
+                      .HasColumnName("kubejsLink")
+                      .HasMaxLength(256);
+
+                entity.Property(e => e.ShadersLink)
+                      .HasColumnName("shadersLink")
+                      .HasMaxLength(256);
+
+                entity.Property(e => e.ManifestLink)
+                      .HasColumnName("manifestLink")
+                      .HasMaxLength(256)
+                      .HasDefaultValue("NULL");
+
+                entity.Property(e => e.LibraryExpectedChecksum)
+                      .HasColumnName("libraryExpectedChecksum")
+                      .HasMaxLength(50);
+
+                entity.Property(e => e.VersionExpectedChecksum)
+                      .HasColumnName("versionExpectedChecksum")
+                      .HasMaxLength(50);
+
+                entity.Property(e => e.AssetsExpectedChecksum)
+                      .HasColumnName("assetsExpectedChecksum")
+                      .HasMaxLength(50);
+
+                entity.Property(e => e.UiVersion)
+                      .HasColumnName("uiVersion")
+                      .HasMaxLength(256);
+                entity.Property(e => e.ClientLink)
+                      .HasColumnName("clientLink")
+                      .HasMaxLength(256);
             });
         }
     }

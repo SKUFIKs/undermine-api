@@ -15,7 +15,6 @@ namespace API_UnderMine.Controllers
             return Ok(new
             {
                 ResolvedRemoteIp = connection.RemoteIpAddress?.ToString(),
-
                 Headers = headers.ToDictionary(h => h.Key, h => h.Value.ToString())
             });
         }

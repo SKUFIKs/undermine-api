@@ -1,3 +1,4 @@
+using API_UnderMine.Services;
 using API_UnderMine_v0_1.Data;
 using API_UnderMine_v0_1.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -26,7 +27,6 @@ builder.Services.AddRateLimiter(options =>
 {
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
     {
-        // Теперь здесь будет РЕАЛЬНЫЙ IP, благодаря настройке выше
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
         return RateLimitPartition.GetFixedWindowLimiter(
@@ -42,6 +42,9 @@ builder.Services.AddRateLimiter(options =>
 
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
+
+builder.Services.AddSingleton<ConfigCacheService>();
+builder.Services.AddHostedService<ConfigUpdateService>();
 
 builder.Services.AddControllers();
 
@@ -102,8 +105,9 @@ app.MapControllers();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    var services = scope.ServiceProvider;
+    var context = services.GetRequiredService<AppDbContext>();
+    context.Database.EnsureCreated();
 }
 
 app.Run();

@@ -9,6 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
+/API_UnderMine_v0_1/API_UnderMine.csproj
 appsettings.json/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
