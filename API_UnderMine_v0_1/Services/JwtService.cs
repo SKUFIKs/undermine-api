@@ -41,7 +41,8 @@ namespace API_UnderMine_v0_1.Services
                 new Claim(ClaimTypes.Name, user.RealName),
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-                new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())
+                new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
+                new Claim(ClaimTypes.Role, user.Role ?? "User")
             };
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(keyString));

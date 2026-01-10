@@ -77,6 +77,10 @@ namespace API_UnderMine_v0_1.Models
 
         [Column("IsBanned")]
         public bool? IsBanned { get; set; }
+
+        [Required]
+        [Column("role")]
+        public string Role { get; set; } = string.Empty;
     }
     
 }

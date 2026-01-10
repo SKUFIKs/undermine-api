@@ -11,16 +11,20 @@ namespace API_UnderMine_v0_1.Data
         public DbSet<McAuthAccount> McAuthAccounts => Set<McAuthAccount>();
         public DbSet<CoreData> CoreDatas => Set<CoreData>();
 
+        public DbSet<TechnoConfig> TechnoConfigs => Set<TechnoConfig>();
+        public DbSet<VanilaConfig> VanilaConfigs => Set<VanilaConfig>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
 
             modelBuilder.Entity<McAuthAccount>(entity =>
             {
                 entity.ToTable("authmeplugin");
 
                 entity.HasKey(e => e.Id)
-                      .HasName("authmeplugin_pkey"); 
+                      .HasName("authmeplugin_pkey");
 
                 entity.HasIndex(e => e.Username)
                       .IsUnique()
@@ -62,64 +66,36 @@ namespace API_UnderMine_v0_1.Data
                 entity.Property(e => e.IsBanned)
                       .HasDefaultValue(false);
             });
-            modelBuilder.Entity<CoreData>(entity =>
+
+            ConfigureConfigEntity<CoreData>(modelBuilder, "config", "config_pkey");
+            ConfigureConfigEntity<TechnoConfig>(modelBuilder, "TechnoConfig", "TechnoConfig_pkey");
+            ConfigureConfigEntity<VanilaConfig>(modelBuilder, "VanilaConfig", "VanilaConfig_pkey");
+        }
+
+        private void ConfigureConfigEntity<T>(ModelBuilder modelBuilder, string tableName, string primaryKeyName) where T : class
+        {
+            modelBuilder.Entity<T>(entity =>
             {
-                entity.ToTable("config");
+                entity.ToTable(tableName);
+                entity.HasKey("Id").HasName(primaryKeyName);
 
-                // Указываем имена колонок точно так, как в твоем CREATE TABLE
-                entity.HasKey(e => e.Id).HasName("config_pkey");
-                entity.Property(e => e.Id).HasColumnName("id");
+               
 
-                entity.Property(e => e.Version)
-                      .HasColumnName("version") // в SQL было "version"
-                      .HasMaxLength(25)
-                      .HasDefaultValue("NULL");
+                var properties = new[] { "Version", "ForgeVersion", "InstallLink", "ConfLink", "ShadersLink", "ManifestLink" };
+                foreach (var prop in properties)
+                {
+                    entity.Property(prop).HasMaxLength(256).HasDefaultValue("NULL");
+                }
 
-                entity.Property(e => e.ForgeVersion)
-                      .HasColumnName("forge") // в SQL было "forge"
-                      .HasMaxLength(25)
-                      .HasDefaultValue("NULL");
+                entity.Property("Version").HasMaxLength(25);
+                entity.Property("ForgeVersion").HasMaxLength(25);
 
-                entity.Property(e => e.InstallLink)
-                      .HasColumnName("installLink") // в SQL было "installLink"
-                      .HasMaxLength(256)
-                      .HasDefaultValue("NULL");
+                entity.Property("LibraryExpectedChecksum").HasMaxLength(50);
+                entity.Property("VersionExpectedChecksum").HasMaxLength(50);
+                entity.Property("AssetsExpectedChecksum").HasMaxLength(50);
 
-                entity.Property(e => e.ConfLink)
-                      .HasColumnName("confLink")
-                      .HasMaxLength(256);
-
-                entity.Property(e => e.KubejsLink)
-                      .HasColumnName("kubejsLink")
-                      .HasMaxLength(256);
-
-                entity.Property(e => e.ShadersLink)
-                      .HasColumnName("shadersLink")
-                      .HasMaxLength(256);
-
-                entity.Property(e => e.ManifestLink)
-                      .HasColumnName("manifestLink")
-                      .HasMaxLength(256)
-                      .HasDefaultValue("NULL");
-
-                entity.Property(e => e.LibraryExpectedChecksum)
-                      .HasColumnName("libraryExpectedChecksum")
-                      .HasMaxLength(50);
-
-                entity.Property(e => e.VersionExpectedChecksum)
-                      .HasColumnName("versionExpectedChecksum")
-                      .HasMaxLength(50);
-
-                entity.Property(e => e.AssetsExpectedChecksum)
-                      .HasColumnName("assetsExpectedChecksum")
-                      .HasMaxLength(50);
-
-                entity.Property(e => e.UiVersion)
-                      .HasColumnName("uiVersion")
-                      .HasMaxLength(256);
-                entity.Property(e => e.ClientLink)
-                      .HasColumnName("clientLink")
-                      .HasMaxLength(256);
+                entity.Property("UiVersion").HasMaxLength(256);
+                entity.Property("ClientLink").HasMaxLength(256);
             });
         }
     }

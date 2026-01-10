@@ -1,49 +1,41 @@
 ﻿using API_UnderMine.Services;
-using API_UnderMine_v0_1.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace API_UnderMine.Services;
 
 public class ConfigUpdateService : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ConfigUpdateService> _logger;
     private readonly ConfigCacheService _cache;
-    private readonly TimeSpan _updateInterval = TimeSpan.FromMinutes(30);
+    private readonly TimeSpan _updateInterval = TimeSpan.FromMinutes(15);
 
-    public ConfigUpdateService(IServiceProvider serviceProvider, ConfigCacheService cache, ILogger<ConfigUpdateService> logger)
+    public ConfigUpdateService(ConfigCacheService cache, ILogger<ConfigUpdateService> logger)
     {
-        _serviceProvider = serviceProvider;
         _cache = cache;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Небольшая задержка перед первым запуском, чтобы БД успела инициализироваться
+        await Task.Yield();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                _logger.LogInformation("Updating config from database...");
+                _logger.LogInformation("Запуск обновления кэша конфигураций из БД...");
 
-                using (var scope = _serviceProvider.CreateScope())
-                {
-                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                // Вызываем метод обновления, который мы написали в ConfigCacheService
+                await _cache.RefreshCacheAsync();
 
-                    var config = await dbContext.CoreDatas.AsNoTracking().FirstOrDefaultAsync(stoppingToken);
-
-                    if (config != null)
-                    {
-                        _cache.CachedConfig = config;
-                        _logger.LogInformation("Config updated successfully.");
-                    }
-                }
+                _logger.LogInformation("Все конфигурации (Core, Techno, Vanila) успешно обновлены.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating config from DB");
+                _logger.LogError(ex, "Ошибка при обновлении конфигураций в фоновом режиме");
             }
 
+            // Ждем 15 минут до следующего обновления
             await Task.Delay(_updateInterval, stoppingToken);
         }
     }
