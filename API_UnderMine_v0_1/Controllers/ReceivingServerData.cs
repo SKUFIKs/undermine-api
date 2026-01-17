@@ -237,11 +237,42 @@ public class ReceivingServerData : ControllerBase
 
             new NewsPart { Text = "Хорошей игры! ", IsBold = true }
         };
+            var profileData = new List<NewsPart>
+        {
+            new NewsPart { Text = "Игровой профиль", IsBold = true, FontSize = 26, Color = "AliceBlue" },
+            new NewsPart { Type = "LineBreak" },
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Игровой профиль еще не до конца готов. Мы работаем над полным выводом вашей статистики. ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = "", Color = "#3C6", IsBold = true },
+            new NewsPart { Type = "LineBreak" },
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Никнейм: ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = username, Color = "#3C6", IsBold = true }, 
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Игровое время: ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = "нет данных", Color = "#3C6" },
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Убийств: ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = "нет данных", Color = "#3C6" }, 
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Смертей: ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = "нет данных", Color = "#3C6" },
+            new NewsPart { Type = "LineBreak" },
+
+            new NewsPart { Text = "Статус: ", FontSize = 14, IsBold = true },
+            new NewsPart { Text = "нет данных", Color = "#3C6" }
+        };
 
             return Ok(new
             {
                 username,
-                news
+                news,
+                profileData
             });
         }
         catch (Exception ex)
