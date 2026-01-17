@@ -13,6 +13,9 @@ namespace API_UnderMine.Services
         public CoreData? CachedCore { get; set; }
         public TechnoConfig? CachedTechno { get; set; }
         public VanilaConfig? CachedVanila { get; set; }
+        public bool IsMaintenance { get; private set; }
+        public bool IsTechnoEnabled { get; private set; }
+        public bool IsVanilaEnabled { get; private set; }
 
         public ConfigCacheService(IServiceScopeFactory scopeFactory, ILogger<ConfigCacheService> logger)
         {
@@ -28,18 +31,22 @@ namespace API_UnderMine.Services
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                    // Загружаем данные. Обрати внимание на присвоение в CachedCore
+
                     CachedCore = await dbContext.CoreDatas.AsNoTracking().FirstOrDefaultAsync(ct);
                     CachedTechno = await dbContext.TechnoConfigs.AsNoTracking().FirstOrDefaultAsync(ct);
                     CachedVanila = await dbContext.VanilaConfigs.AsNoTracking().FirstOrDefaultAsync(ct);
 
-                    _logger.LogInformation("Кэш обновлен успешно.");
+                    // 2. Загружаем глобальные настройки
+                    var settings = await dbContext.GlobalSettings.AsNoTracking().ToListAsync(ct);
+
+                    IsMaintenance = settings.FirstOrDefault(s => s.Key == "Maintenance")?.Value == "true";
+                    IsTechnoEnabled = settings.FirstOrDefault(s => s.Key == "Techno_Enabled")?.Value != "false";
+                    IsVanilaEnabled = settings.FirstOrDefault(s => s.Key == "Vanila_Enabled")?.Value != "false";
+
+                    _logger.LogInformation("Кэш и статусы доступа обновлены.");
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка обновления кэша");
-            }
+            catch (Exception ex) { _logger.LogError(ex, "Ошибка обновления кэша"); }
         }
     }
 }

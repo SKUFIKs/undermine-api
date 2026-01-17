@@ -101,9 +101,11 @@ public class ReceivingServerData : ControllerBase
                 return StatusCode(503, "One or more configurations are not loaded yet.");
             }
 
-            var servers = new List<object>
+            var servers = new List<object>();
+
+            if (_cache.IsVanilaEnabled && _cache.CachedVanila != null)
             {
-                new
+                servers.Add(new
                 {
                     Id = 1,
                     Name = "Vanila+",
@@ -135,12 +137,15 @@ public class ReceivingServerData : ControllerBase
                         confLink = vanila.ConfLink,
                         kubejsLink = vanila.KubejsLink,
                         shadersLink = vanila.ShadersLink,
-                        versionExpectedChecksum = vanila.VersionExpectedChecksum, 
+                        versionExpectedChecksum = vanila.VersionExpectedChecksum,
                         libraryExpectedChecksum = vanila.LibraryExpectedChecksum,
                         assetsExpectedChecksum = vanila.AssetsExpectedChecksum
                     }
-                },
-                new
+                });
+            }
+            if (_cache.IsTechnoEnabled && _cache.CachedTechno != null)
+            {
+                servers.Add(new
                 {
                     Id = 2,
                     Name = "TechnoMagic",
@@ -176,10 +181,11 @@ public class ReceivingServerData : ControllerBase
                         libraryExpectedChecksum = techno.LibraryExpectedChecksum,
                         assetsExpectedChecksum = techno.AssetsExpectedChecksum
                     }
-                }
-            };
-            _logger.LogInformation($"Vanila Hash: {vanila.LibraryExpectedChecksum}");
+                });
+            }
+
             return Ok(servers);
+
         }
         catch (Exception ex)
         {

@@ -13,6 +13,7 @@ namespace API_UnderMine_v0_1.Data
 
         public DbSet<TechnoConfig> TechnoConfigs => Set<TechnoConfig>();
         public DbSet<VanilaConfig> VanilaConfigs => Set<VanilaConfig>();
+        public DbSet<GlobalSetting> GlobalSettings { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -70,6 +71,14 @@ namespace API_UnderMine_v0_1.Data
             ConfigureConfigEntity<CoreData>(modelBuilder, "config", "config_pkey");
             ConfigureConfigEntity<TechnoConfig>(modelBuilder, "TechnoConfig", "TechnoConfig_pkey");
             ConfigureConfigEntity<VanilaConfig>(modelBuilder, "VanilaConfig", "VanilaConfig_pkey");
+
+            modelBuilder.Entity<GlobalSetting>(entity =>
+            {
+                entity.ToTable("global_settings"); 
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Key).HasMaxLength(100).IsRequired();
+                entity.Property(e => e.Value).HasMaxLength(255);
+            });
         }
 
         private void ConfigureConfigEntity<T>(ModelBuilder modelBuilder, string tableName, string primaryKeyName) where T : class
