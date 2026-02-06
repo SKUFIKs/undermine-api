@@ -1,11 +1,11 @@
-using API_UnderMine_v0_1.Models;
+using UnderMineApi.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 
-namespace API_UnderMine_v0_1.Services
+namespace UnderMineApi.Services
 {
     public interface IJwtService
     {

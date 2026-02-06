@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsPackable>false</IsPackable>
+		<NoWarn>$(NoWarn);NU1605;CS1705</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+		<PackageReference Include="xunit" Version="2.9.2" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="3.0.0">
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="coverlet.collector" Version="6.0.0" />
+		<PackageReference Include="Moq" Version="4.20.72" />
+
+		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.8" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.1" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.1" />
+
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\UnderMineApi\UnderMineApi.csproj" />
+	</ItemGroup>
+
+</Project>

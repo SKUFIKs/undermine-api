@@ -1,6 +1,4 @@
-﻿using API_UnderMine.Services;
-
-namespace API_UnderMine.Services;
+﻿namespace UnderMineApi.Services;
 
 public class ConfigUpdateService : BackgroundService
 {

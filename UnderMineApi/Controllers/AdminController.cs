@@ -1,10 +1,10 @@
-﻿using API_UnderMine_v0_1.Data;
+﻿using UnderMineApi.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace API_UnderMine.Controllers
+namespace UnderMineApi.Controllers
 {
     [ApiController]
     [ApiVersion("1.0")]
@@ -43,7 +43,7 @@ namespace API_UnderMine.Controllers
         }
 
         [HttpPost("ban/{id}")]
-        public async Task<IActionResult> BanUser(int id)
+        public async Task<IActionResult> BanUser(long id) 
         {
             var targetUser = await _context.McAuthAccounts.FindAsync(id);
 
@@ -64,7 +64,7 @@ namespace API_UnderMine.Controllers
         }
 
         [HttpPost("promote/{id}")]
-        public async Task<IActionResult> PromoteToAdmin(int id)
+        public async Task<IActionResult> PromoteToAdmin(long id) 
         {
             var targetUser = await _context.McAuthAccounts.FindAsync(id);
 

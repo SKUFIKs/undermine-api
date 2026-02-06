@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace API_UnderMine_v0_1.Models
+namespace UnderMineApi.Models
 {
     [Table("authmeplugin")]
     public class McAuthAccount

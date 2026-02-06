@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace API_UnderMine.Models
+namespace UnderMineApi.Models
 {
     [Table("config")]
     public class CoreData

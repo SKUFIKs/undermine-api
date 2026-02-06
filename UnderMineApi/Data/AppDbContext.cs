@@ -1,8 +1,7 @@
-﻿using API_UnderMine.Models;
-using API_UnderMine_v0_1.Models;
+﻿using UnderMineApi.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace API_UnderMine_v0_1.Data
+namespace UnderMineApi.Data
 {
     public class AppDbContext : DbContext
     {

@@ -1,11 +1,11 @@
-﻿using API_UnderMine_v0_1.Data;
-using API_UnderMine_v0_1.DTOs;
-using API_UnderMine_v0_1.Models;
-using API_UnderMine_v0_1.Services;
+﻿using UnderMineApi.Data;
+using UnderMineApi.DTOs;
+using UnderMineApi.Models;
+using UnderMineApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace API_UnderMine_v0_1.Controllers;
+namespace UnderMineApi.Controllers;
 
 [ApiController]
 [Route("api/auth")]

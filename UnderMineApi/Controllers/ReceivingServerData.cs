@@ -1,10 +1,10 @@
-﻿using API_UnderMine.Models;
-using API_UnderMine.Services;
+﻿using UnderMineApi.Models;
+using UnderMineApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
-namespace API_UnderMine_v0_1.Controllers;
+namespace UnderMineApi.Controllers;
 
 [ApiController]
 [Route("api/v0.1")]

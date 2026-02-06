@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 
-namespace API_UnderMine.Controllers
+namespace UnderMineApi.Controllers
 {
     [ApiController]
     [Route("api/debug")]

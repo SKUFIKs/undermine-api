@@ -1,6 +1,6 @@
-﻿using API_UnderMine.Services;
+﻿using UnderMineApi.Services;
 
-namespace API_UnderMine.Controllers
+namespace UnderMineApi.Controllers
 {
     public class MaintenanceMiddleware
     {

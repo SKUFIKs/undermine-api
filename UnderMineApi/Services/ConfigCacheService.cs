@@ -1,21 +1,22 @@
-﻿using API_UnderMine.Models;
-using API_UnderMine_v0_1.Data;
+﻿using UnderMineApi.Models;
+using UnderMineApi.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace API_UnderMine.Services
+namespace UnderMineApi.Services
 {
     public class ConfigCacheService
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<ConfigCacheService> _logger;
 
-        // Переименуй здесь: было CachedConfig -> стало CachedCore
-        public CoreData? CachedCore { get; set; }
-        public TechnoConfig? CachedTechno { get; set; }
-        public VanilaConfig? CachedVanila { get; set; }
-        public bool IsMaintenance { get; private set; }
-        public bool IsTechnoEnabled { get; private set; }
-        public bool IsVanilaEnabled { get; private set; }
+        public virtual CoreData? CachedCore { get; set; }
+        public virtual TechnoConfig? CachedTechno { get; set; }
+        public virtual VanilaConfig? CachedVanila { get; set; }
+        public virtual bool IsMaintenance { get; set; } 
+        public virtual bool IsTechnoEnabled { get; set; }
+        public virtual bool IsVanilaEnabled { get; set; }
+
+        protected ConfigCacheService() { } // Добавь это для Moq
 
         public ConfigCacheService(IServiceScopeFactory scopeFactory, ILogger<ConfigCacheService> logger)
         {

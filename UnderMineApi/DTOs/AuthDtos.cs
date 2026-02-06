@@ -1,4 +1,4 @@
-﻿namespace API_UnderMine_v0_1.DTOs;
+﻿namespace UnderMineApi.DTOs;
 
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;

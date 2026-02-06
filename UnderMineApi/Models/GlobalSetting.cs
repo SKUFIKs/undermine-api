@@ -1,4 +1,4 @@
-﻿namespace API_UnderMine.Models
+﻿namespace UnderMineApi.Models
 {
     public class GlobalSetting
     {
