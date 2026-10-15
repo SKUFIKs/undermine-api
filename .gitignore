@@ -9,8 +9,6 @@
 *.user
 *.userosscache
 *.sln.docstates
-/API_UnderMine_v0_1/API_UnderMine.csproj
-appsettings.json/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -363,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Environment variables
+.env
+.env.local
+.env.*.local
