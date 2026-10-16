@@ -145,6 +145,10 @@ namespace UnderMineApi.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("mc_version");
 
+                    b.Property<string>("ModpackImport")
+                        .HasColumnType("text")
+                        .HasColumnName("modpack_import");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)

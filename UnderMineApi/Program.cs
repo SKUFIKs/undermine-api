@@ -161,6 +161,10 @@ try
 
     builder.Services.AddScoped<UnderMineApi.Services.Interfaces.IUserService, UnderMineApi.Services.UserService>();
     builder.Services.AddScoped<UnderMineApi.Services.Interfaces.IServerService, UnderMineApi.Services.ServerService>();
+
+    // Fresh installs have no admin to sign in with. Creates one with a random login/password on
+    // startup and prints the credentials, so the admin panel is reachable without touching the DB.
+    builder.Services.AddScoped<IAdminBootstrapService, AdminBootstrapService>();
     builder.Services.AddScoped<UnderMineApi.Services.PasswordHasher.IPasswordHasher, UnderMineApi.Services.PasswordHasher.BcryptPasswordHasher>();
     builder.Services.AddScoped<UnderMineApi.Services.AdminAuditService>();
 
@@ -272,6 +276,23 @@ try
         {
             var logger = services.GetRequiredService<ILogger<Program>>();
             logger.LogError(ex, "Error during automatic application of PostgreSQL database migrations");
+        }
+    }
+
+    // Runs after Migrate() so the user_accounts / user_data tables exist. Kept in its own try/catch:
+    // a bootstrap problem must never stop the API from serving traffic (the admin panel can still
+    // be reached and used to create an admin by other means).
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        try
+        {
+            await services.GetRequiredService<IAdminBootstrapService>().EnsureAdminAsync();
+        }
+        catch (Exception ex)
+        {
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "Failed to bootstrap the default admin account");
         }
     }
 

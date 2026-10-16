@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: undermine
-      POSTGRES_USER: undermine
-      POSTGRES_PASSWORD: undermine_secret
+      POSTGRES_DB: ${POSTGRES_DB:-}
+      POSTGRES_USER: ${POSTGRES_USER:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     ports:
       - "5432:5432"
     volumes:
@@ -14,8 +14,8 @@ services:
     image: dhi.io/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -41,21 +41,27 @@ services:
     environment:
       ASPNETCORE_URLS: "http://+:8080"
       ASPNETCORE_ENVIRONMENT: "Production"
-      ConnectionStrings__PostgreConnection: Host=postgres;Database=undermine;Username=undermine;Password=undermine_secret
-      Jwt__Key: "wZsQA36ZDPz8pACMCbRO8lGIThBrA9W5"
-      Jwt__Issuer: "UnderMine"
-      Jwt__Audience: "UnderMine"
-      S3__Endpoint: minio:9000
-      S3__AccessKey: minioadmin
-      S3__SecretKey: minioadmin
-      S3__Bucket: minecraft-builds
-      S3__UseSsl: "false"
-      S3__CdnBaseUrl: http://localhost:8080
+      ConnectionStrings__PostgreConnection: Host=${POSTGRES_HOST:-};Port=${POSTGRES_PORT:-};Database=${POSTGRES_DB:-};Username=${POSTGRES_USER:-};Password=${POSTGRES_PASSWORD:-}
+      Jwt__Key: "${Jwt__Key:-}"
+      Jwt__Issuer: "${Jwt__Issuer:-}"
+      Jwt__Audience: "${Jwt__Audience:-}"
+      S3__Endpoint: ${S3__Endpoint:-}
+      S3__AccessKey: ${S3__AccessKey:-}
+      S3__SecretKey: ${S3__SecretKey:-}
+      S3__Bucket: ${S3__Bucket:-}
+      S3__UseSsl: ${S3__UseSsl:-}
+      S3__CdnBaseUrl: ${S3__CdnBaseUrl:-}
       Build__RootPath: /app/builds
       # Free API key from https://console.curseforge.com/ - required to import CurseForge
       # modpacks (their manifests reference files by projectID/fileID only).
       # Put CurseForgeApiKey into a .env next to docker-compose.yml.
       CurseForge__ApiKey: "${CurseForgeApiKey:-}"
+      # First-run admin bootstrap (see AdminBootstrapService). On a fresh DB it creates an admin
+      # with a random login/password and prints them to the log. Set Enabled=false to disable.
+      # Set BOTH Username and Password to use fixed credentials (also doubles as password reset).
+      BootstrapAdmin__Enabled: "${BootstrapAdminEnabled:-true}"
+      BootstrapAdmin__Username: "${BootstrapAdminUsername:-}"
+      BootstrapAdmin__Password: "${BootstrapAdminPassword:-}"
     volumes:
       - builds_data:/app/builds
     depends_on:
