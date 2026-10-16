@@ -44,6 +44,9 @@ Generated\ Files/
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
+# ...but never C# sources such as Domain/Entities/BuildLog.cs. The rule above is meant
+# for MSBuild's BuildLog.* artefacts and would otherwise keep entity files out of the repo.
+![Bb]uild[Ll]og*.cs
 
 # NUnit
 *.VisualState.xml
