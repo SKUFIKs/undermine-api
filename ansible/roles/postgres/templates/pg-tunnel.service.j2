@@ -1,0 +1,13 @@
+[Unit]
+Description=PostgreSQL replication tunnel to primary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/bin/ssh -N -L 127.0.0.1:{{ pg_tunnel_port }}:127.0.0.1:5432 -i /root/.ssh/id_ed25519_pg -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -p {{ hostvars[groups['prod_primary'][0]].ansible_port | default(22) }} {{ hostvars[groups['prod_primary'][0]].ansible_user | default('deploy') }}@{{ hostvars[groups['prod_primary'][0]].ansible_host }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

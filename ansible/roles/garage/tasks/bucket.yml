@@ -1,0 +1,51 @@
+---
+# Create a Garage bucket, grant the API key read/write access, and enable
+# the public bucket website. Callers must set garage_bucket_name and
+# garage_api_key_id. The first Garage host is used (run_once).
+- name: List Garage buckets
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} bucket list
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_bucket_list
+  changed_when: false
+  run_once: true
+
+- name: Create the Garage bucket
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} bucket create
+    {{ garage_bucket_name }}
+  become: true
+  become_user: "{{ garage_user }}"
+  run_once: true
+  changed_when: true
+  when: garage_bucket_name not in garage_bucket_list.stdout
+
+- name: Allow the API key read/write on the bucket
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} bucket allow
+    --read --write {{ garage_bucket_name }} --key {{ garage_api_key_id }}
+  become: true
+  become_user: "{{ garage_user }}"
+  run_once: true
+  changed_when: false
+
+- name: Enable the bucket website
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} bucket website
+    --allow {{ garage_bucket_name }}
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_bucket_website
+  run_once: true
+  changed_when: false
+  failed_when: false
+
+- name: Warn when the bucket website could not be enabled
+  ansible.builtin.debug:
+    msg: >-
+      Garage bucket website for {{ garage_bucket_name }} returned
+      rc={{ garage_bucket_website.rc }}:
+      {{ garage_bucket_website.stderr | default('') | trim }}
+  run_once: true
+  when: garage_bucket_website.rc != 0

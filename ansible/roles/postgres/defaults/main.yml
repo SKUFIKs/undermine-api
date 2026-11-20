@@ -1,0 +1,24 @@
+---
+# PostgreSQL major version is pinned: the primary, replica and DR must run the
+# same binaries, otherwise pgBackRest cannot restore the backup.
+pg_major_version: "18"
+pg_version: "{{ pg_major_version }}"
+pg_config_dir: "/etc/postgresql/{{ pg_major_version }}/main"
+pg_old_data: "/var/lib/postgresql/{{ pg_major_version }}/main"
+pg_new_data: "/srv/undermine/postgres"
+
+required_packages:
+  - "postgresql-{{ pg_major_version }}"
+  - "postgresql-contrib-{{ pg_major_version }}"
+  - python3-psycopg2
+  - rsync
+  - acl
+  - locales
+
+app_db_name: "undermine"
+app_user: "undermine_app"
+repl_user: "undermine_repl"
+
+# Local port on the standby that forwards to the primary's 127.0.0.1:5432.
+# Must not collide with the staging PostgreSQL cluster (5433).
+pg_tunnel_port: 15432

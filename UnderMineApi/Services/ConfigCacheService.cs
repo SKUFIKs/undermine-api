@@ -42,9 +42,9 @@ namespace UnderMineApi.Services
 
                     var maintenanceValue = settings.FirstOrDefault(s => s.Key == "Maintenance")?.Value == "true";
 
-                    // ApiLockMiddleware and ApplicationStatusService read these flags, so they must
-                    // be refreshed together with the server list - otherwise switching maintenance
-                    // mode in the admin panel has no effect until the application restarts.
+                    // ApiLockMiddleware reads these flags, so they must be refreshed together with
+                    // the server list - otherwise switching maintenance mode in the admin panel has
+                    // no effect until the application restarts.
                     IsMaintenance = maintenanceValue;
                     IsApiLocked = maintenanceValue;
 

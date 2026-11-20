@@ -1,0 +1,94 @@
+---
+- name: Require the Vault bundle structure
+  ansible.builtin.assert:
+    that:
+      - hashicorp_vault_bundle is mapping
+      - hashicorp_vault_bundle.vars is mapping
+      - hashicorp_vault_bundle.hosts is mapping
+      - inventory_hostname in hashicorp_vault_bundle.hosts
+    fail_msg: >-
+      Vault path {{ hashicorp_vault_config_path }} on mount
+      {{ hashicorp_vault_mount_point }} must contain "vars" and "hosts",
+      and hosts must include "{{ inventory_hostname }}".
+
+- name: Require global variables in the Vault bundle
+  ansible.builtin.assert:
+    that:
+      - item in hashicorp_vault_bundle.vars
+    fail_msg: "Vault bundle.vars is missing: {{ item }}"
+  loop: "{{ required_vault_vars }}"
+
+- name: Require host variables in the Vault bundle
+  ansible.builtin.assert:
+    that:
+      - item in hashicorp_vault_bundle.hosts[inventory_hostname]
+    fail_msg: >-
+      Vault bundle.hosts.{{ inventory_hostname }} is missing: {{ item }}
+  loop: "{{ required_vault_host_vars }}"
+
+- name: Require token keys in the tokens secret
+  ansible.builtin.assert:
+    that:
+      - hashicorp_vault_tokens.ghcr_token is defined
+      - hashicorp_vault_tokens.cloudflare_token is defined
+      - hashicorp_vault_tokens.garage_rpc_secret is defined
+    fail_msg: >-
+      Vault path {{ hashicorp_vault_tokens_path }} must contain
+      ghcr_token, cloudflare_token and garage_rpc_secret.
+
+- name: Require password keys in the database secret
+  ansible.builtin.assert:
+    that:
+      - hashicorp_vault_database.app_pass is defined
+      - hashicorp_vault_database.repl_pass is defined
+      - hashicorp_vault_database.staging_pass is defined
+    fail_msg: >-
+      Vault path {{ hashicorp_vault_database_path }} must contain
+      app_pass, repl_pass and staging_pass.
+
+- name: Require critical keys in the app secret
+  ansible.builtin.assert:
+    that:
+      - hashicorp_vault_app is mapping
+      - hashicorp_vault_app.Jwt__Key | default('') | length > 0
+      - hashicorp_vault_app.Jwt__Issuer | default('') | length > 0
+      - hashicorp_vault_app.Jwt__Audience | default('') | length > 0
+    fail_msg: >-
+      Vault path {{ hashicorp_vault_app_path }} must contain non-empty
+      Jwt__Key, Jwt__Issuer and Jwt__Audience.
+
+- name: Publish global variables from Vault
+  ansible.builtin.set_fact:
+    "{{ item.key }}": "{{ item.value }}"
+  loop: "{{ hashicorp_vault_bundle.vars | dict2items }}"
+  no_log: true
+
+- name: Publish secrets from Vault
+  ansible.builtin.set_fact:
+    ghcr_token: "{{ hashicorp_vault_tokens.ghcr_token }}"
+    cloudflare_token: "{{ hashicorp_vault_tokens.cloudflare_token }}"
+    garage_rpc_secret: "{{ hashicorp_vault_tokens.garage_rpc_secret }}"
+    vault_app_pass: "{{ hashicorp_vault_database.app_pass }}"
+    vault_repl_pass: "{{ hashicorp_vault_database.repl_pass }}"
+    vault_staging_pass: "{{ hashicorp_vault_database.staging_pass }}"
+    vault_staging_basic_auth: "{{ hashicorp_vault_tokens.staging_basic_auth | default('') }}"
+    app_env_vars: "{{ hashicorp_vault_app }}"
+  no_log: true
+
+- name: Publish host variables from Vault
+  ansible.builtin.set_fact:
+    "{{ item.key }}": "{{ item.value }}"
+  loop: "{{ hashicorp_vault_bundle.hosts[inventory_hostname] | dict2items }}"
+  no_log: true
+
+- name: Use the staging database password on staging hosts
+  ansible.builtin.set_fact:
+    app_db_password: "{{ vault_staging_pass }}"
+  no_log: true
+  when: inventory_hostname in (groups['staging'] | default([]))
+
+- name: Apply host-specific app environment overrides
+  ansible.builtin.set_fact:
+    app_env_vars: "{{ app_env_vars | combine(app_env_overrides | default({})) }}"
+  no_log: true
+  when: app_env_overrides is defined

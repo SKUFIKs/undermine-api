@@ -58,6 +58,9 @@ public class ModpackImportService
     /// <summary>Hard cap for a staged .mrpack or a single index file (1 GB).</summary>
     public const long MaxFileBytes = 1024L * 1024 * 1024;
 
+    /// <summary>Upper bound on index/manifest entries to avoid pathological archives.</summary>
+    public const int MaxFiles = 20_000;
+
     /// <summary>Default HTTP timeout for large file downloads (whole-request timeout).</summary>
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(30);
 
@@ -399,6 +402,10 @@ public class ModpackImportService
         if (index.Files.Count == 0)
             throw new ModpackImportException($"{IndexEntryName} contains no files");
 
+        if (index.Files.Count > MaxFiles)
+            throw new ModpackImportException(
+                $"{IndexEntryName} contains too many files ({index.Files.Count}, max {MaxFiles})");
+
         foreach (var file in index.Files)
         {
             if (string.IsNullOrWhiteSpace(file.Path))
@@ -451,6 +458,10 @@ public class ModpackImportService
 
         if (manifest.Files.Count == 0)
             throw new ModpackImportException($"{CurseForgeManifestEntryName} contains no files");
+
+        if (manifest.Files.Count > MaxFiles)
+            throw new ModpackImportException(
+                $"{CurseForgeManifestEntryName} contains too many files ({manifest.Files.Count}, max {MaxFiles})");
 
         foreach (var file in manifest.Files)
         {

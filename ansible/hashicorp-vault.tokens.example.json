@@ -1,0 +1,6 @@
+{
+  "ghcr_token": "",
+  "cloudflare_token": "CHANGE_ME_CLOUDFLARE_API_TOKEN",
+  "garage_rpc_secret": "CHANGE_ME_64_HEX_CHARS",
+  "staging_basic_auth": ""
+}

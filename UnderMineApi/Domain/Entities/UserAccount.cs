@@ -45,7 +45,24 @@ namespace UnderMineApi.Domain.Entities
         public string? Email { get; set; }
 
         [Column("device_id")]
+        [MaxLength(128)]
         public string? DeviceId { get; set; }
+
+        /// <summary>
+        /// Registration subnet key ("192.0.2.0/24", "2001:db8::/64", ...) used by the per-IP
+        /// registration limit. Null for accounts created before this column existed; those are
+        /// still counted by their exact <see cref="RegIp"/>.
+        /// </summary>
+        [Column("regip_prefix")]
+        [MaxLength(64)]
+        public string? RegIpPrefix { get; set; }
+
+        /// <summary>
+        /// Incremented whenever the password is changed/reset. Every JWT carries this value, so
+        /// old tokens stop working immediately after a password change (re-login required).
+        /// </summary>
+        [Column("token_version")]
+        public int TokenVersion { get; set; }
 
         [Required]
         [Column("user_role")]

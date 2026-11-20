@@ -1,7 +1,7 @@
 using Asp.Versioning;
 using DotNetEnv;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -10,10 +10,13 @@ using Serilog.Events;
 using StackExchange.Redis;
 using System.Text;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
 using UnderMineApi.Data;
+using UnderMineApi.Extensions;
+using UnderMineApi.HealthChecks;
 using UnderMineApi.Middleware;
+using UnderMineApi.Options;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Registration;
 
 DotNetEnv.Env.Load();
 
@@ -40,6 +43,7 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     builder.Services.AddSerilog();
+    builder.Services.AddValidatedStartupOptions(builder.Configuration);
 
     System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -54,50 +58,23 @@ try
         .AddNpgSql(
             connectionString: connectionString,
             name: "PostgreSQL",
-            failureStatus: HealthStatus.Unhealthy
-        );
+            failureStatus: HealthStatus.Unhealthy,
+            tags: new[] { "ready" })
+        // Liveness must not depend on external services: the process is alive even while the
+        // database is restarting.
+        .AddCheck("self", () => HealthCheckResult.Healthy(), tags: new[] { "live" })
+        // Storage is reported by /health (full) but not required for /health/ready: the API can
+        // still serve manifests while MinIO is temporarily unavailable.
+        .AddCheck<S3HealthCheck>("MinIO", tags: new[] { "storage" });
 
-    builder.Services.Configure<ForwardedHeadersOptions>(options =>
-    {
-        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-        options.KnownNetworks.Clear();
-        options.KnownProxies.Clear();
-        options.ForwardLimit = null;
-    });
+    // Trust X-Forwarded-* only from the explicitly configured reverse proxy (nginx in
+    // docker-compose). Without configuration the safe loopback-only defaults apply, so a direct
+    // client cannot spoof its address by sending an X-Forwarded-For header.
+    var forwardedHeadersEnabled = builder.Configuration.IsForwardedHeadersEnabled();
+    builder.Services.AddConfiguredForwardedHeaders(builder.Configuration);
 
-    builder.Services.AddRateLimiter(options =>
-    {
-        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
-        {
-            // Static assets of the admin panel are not part of the public API and must not
-            // consume the API rate limit budget (the limit is shared per client IP otherwise).
-            if (!httpContext.Request.Path.StartsWithSegments("/api"))
-            {
-                return RateLimitPartition.GetFixedWindowLimiter(
-                    partitionKey: "static",
-                    factory: _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 1000,
-                        Window = TimeSpan.FromSeconds(10),
-                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                        QueueLimit = 0
-                    });
-            }
-
-            var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-            return RateLimitPartition.GetFixedWindowLimiter(
-                partitionKey: ip,
-                factory: _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = 15,
-                    Window = TimeSpan.FromSeconds(10),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    QueueLimit = 0
-                });
-        });
-        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    });
+    // Separate policies for public API, admin polling, auth and registration.
+    builder.Services.AddConfiguredRateLimiting(builder.Configuration);
 
     var redisConn = builder.Configuration.GetConnectionString("Redis");
     IConnectionMultiplexer? multiplexer = null;
@@ -162,17 +139,31 @@ try
     builder.Services.AddScoped<UnderMineApi.Services.Interfaces.IUserService, UnderMineApi.Services.UserService>();
     builder.Services.AddScoped<UnderMineApi.Services.Interfaces.IServerService, UnderMineApi.Services.ServerService>();
 
+    // Re-validates the account behind an already issued JWT (ban / role changes / deleted user).
+    builder.Services.AddScoped<UnderMineApi.Services.Interfaces.IUserAccessService, UnderMineApi.Services.UserAccessService>();
+
+    // Registration abuse limits (device/subnet quotas and a strict create-account rate limit).
+    builder.Services.Configure<RegistrationOptions>(builder.Configuration.GetSection("Registration"));
+
     // Fresh installs have no admin to sign in with. Creates one with a random login/password on
     // startup and prints the credentials, so the admin panel is reachable without touching the DB.
     builder.Services.AddScoped<IAdminBootstrapService, AdminBootstrapService>();
     builder.Services.AddScoped<UnderMineApi.Services.PasswordHasher.IPasswordHasher, UnderMineApi.Services.PasswordHasher.BcryptPasswordHasher>();
     builder.Services.AddScoped<UnderMineApi.Services.AdminAuditService>();
 
-    builder.Services.AddControllers()
+    builder.Services.AddControllers(options =>
+        {
+            // One error envelope for every MVC error result.
+            options.Filters.Add<ApiErrorNormalizationFilter>();
+        })
         .AddJsonOptions(o =>
         {
             o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         });
+
+    // OpenAPI/Swagger is exposed only in Development (see the pipeline below).
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
 
     builder.Services.AddApiVersioning(options =>
     {
@@ -211,40 +202,55 @@ try
                 ValidAudience = jwtConfig["Audience"],
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtConfig["Key"]!)),
             };
-            options.Events = new JwtBearerEvents();
+            options.Events = new JwtBearerEvents
+            {
+                OnChallenge = async context =>
+                {
+                    context.HandleResponse();
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        status = StatusCodes.Status401Unauthorized,
+                        error = "UNAUTHORIZED",
+                        message = "Authentication required.",
+                        request_id = RequestId(context.HttpContext)
+                    });
+                },
+                OnForbidden = async context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        status = StatusCodes.Status403Forbidden,
+                        error = "FORBIDDEN",
+                        message = "You do not have permission to perform this action.",
+                        request_id = RequestId(context.HttpContext)
+                    });
+                }
+            };
         });
 
-    var allowedOrigins = builder.Configuration["CORS:AllowedOrigins"]?
-        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
+    // CORS: only explicitly configured origins in Production; same-origin otherwise.
+    builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 
-    builder.Services.AddCors(options =>
-    {
-        if (allowedOrigins.Length > 0)
-        {
-            options.AddPolicy("ConfiguredOrigins", policy =>
-                policy.WithOrigins(allowedOrigins)
-                    .AllowAnyMethod()
-                    .AllowAnyHeader()
-                    .AllowCredentials());
-        }
-        else
-        {
-            options.AddPolicy("AllowAll", policy =>
-                policy.SetIsOriginAllowed(_ => true)
-                    .AllowAnyMethod()
-                    .AllowAnyHeader()
-                    .AllowCredentials());
-        }
-    });
-
-    builder.Services.AddScoped<ApplicationStatusService>();
 
     // Build services
     builder.Services.AddScoped<EngineDownloadService>();
     builder.Services.AddScoped<S3StorageService>();
     builder.Services.AddScoped<BuildManifestService>();
+    builder.Services.AddScoped<BuildEditorService>();
     builder.Services.AddHttpClient<ModrinthService>();
     builder.Services.AddScoped<CustomArtifactService>();
+
+    // Java runtimes are downloaded from Adoptium once and cached on disk, then streamed to
+    // launchers through /api/v1.0/java. The client has a generous timeout because the first
+    // request may fetch a ~50 MB archive.
+    builder.Services.AddHttpClient(JavaRuntimeService.HttpClientName, client =>
+    {
+        client.Timeout = TimeSpan.FromMinutes(15);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("UnderMineApi/1.0");
+    });
+    builder.Services.AddSingleton<JavaRuntimeService>();
 
     // .mrpack modpack imports (staging, index parsing, parallel file download).
     // Resolves CurseForge (projectID, fileID) pairs when an uploaded CurseForge pack is imported.
@@ -260,23 +266,37 @@ try
     builder.Services.AddMemoryCache();
     builder.Services.AddSingleton<VersionCatalogService>();
 
-    builder.Services.AddHostedService<BuildWorkerService>();
+    // Cross-process build ownership (PostgreSQL advisory lock). One build is processed by one
+    // worker even when several API replicas share the same database.
+    builder.Services.AddSingleton<UnderMineApi.Services.Interfaces.IBuildLockService, UnderMineApi.Services.BuildLockService>();
+
+    // Only one node processes the build queue. Standby/DR replicas set Build:WorkerEnabled=false.
+    if (RuntimeFlags.RunBuildWorker(builder.Configuration))
+    {
+        builder.Services.AddHostedService<BuildWorkerService>();
+    }
+    else
+    {
+        Log.Information("Build worker is disabled (Build:WorkerEnabled=false).");
+    }
+
+    builder.Services.AddHostedService<BuildLogRetentionService>();
 
     var app = builder.Build();
 
-    using (var scope = app.Services.CreateScope())
+    // --migrate-only turns the image into a one-shot migration job: apply migrations, then exit
+    // without starting Kestrel. This is how deploy pipelines migrate before rolling API replicas.
+    var migrateOnly = args.Any(arg =>
+        string.Equals(arg, "--migrate-only", StringComparison.OrdinalIgnoreCase));
+
+    // Bounded retries (the DB container may still be starting), then fail fast. Serving traffic
+    // against an outdated/missing schema is worse than not starting at all.
+    await app.MigrateDatabaseWithRetryAsync(force: migrateOnly);
+
+    if (migrateOnly)
     {
-        var services = scope.ServiceProvider;
-        try
-        {
-            var context = services.GetRequiredService<AppDbContext>();
-            context.Database.Migrate();
-        }
-        catch (Exception ex)
-        {
-            var logger = services.GetRequiredService<ILogger<Program>>();
-            logger.LogError(ex, "Error during automatic application of PostgreSQL database migrations");
-        }
+        Log.Information("Database migrations completed; exiting because --migrate-only was specified.");
+        return;
     }
 
     // Runs after Migrate() so the user_accounts / user_data tables exist. Kept in its own try/catch:
@@ -325,20 +345,53 @@ try
 
     app.UseSerilogRequestLogging();
     app.UseMiddleware<UnderMineApi.Middleware.RequestLoggingMiddleware>();
+    app.UseMiddleware<SecurityHeadersMiddleware>();
     app.UseExceptionHandler();
-    app.MapHealthChecks("/health");
+
+    // /health/live  - process liveness only (no external dependencies)
+    // /health/ready - readiness: PostgreSQL is reachable
+    // /health       - full status: readiness + MinIO/S3
+    app.MapHealthChecks("/health/live", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("live")
+    });
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("ready")
+    });
+    app.MapHealthChecks("/health", new HealthCheckOptions
+    {
+        Predicate = _ => true
+    });
 
     // Forwarded headers must be applied before authentication/rate limiting so that the
     // client IP and scheme seen downstream are the ones proxied by nginx.
-    app.UseForwardedHeaders();
+    if (forwardedHeadersEnabled)
+        app.UseForwardedHeaders();
 
-    var corsPolicyName = allowedOrigins.Length > 0 ? "ConfiguredOrigins" : "AllowAll";
-    app.UseCors(corsPolicyName);
+    // Explicit routing so endpoint metadata ([Authorize] / [AllowAnonymous]) is available to
+    // AccountBanMiddleware below.
+    app.UseRouting();
+
+    // Same-origin production deployments do not need the CORS middleware at all.
+    if (CorsExtensions.IsCorsEnabled(builder.Configuration, builder.Environment))
+        app.UseCors(CorsExtensions.PolicyName);
+
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
 
     // Authentication runs before the maintenance lock so that admins can still reach
     // the API (and switch maintenance off) while the public API is locked.
     app.UseAuthentication();
     app.UseRateLimiter();
+
+    // A valid JWT is not enough: the account may have been banned or demoted since it was
+    // issued. Runs before maintenance/authorization so banned admins are blocked as well.
+    app.UseMiddleware<AccountBanMiddleware>();
+
     app.UseMiddleware<ApiLockMiddleware>();
     app.UseAuthorization();
 
@@ -358,11 +411,18 @@ try
         }
     });
 
+    static string? RequestId(HttpContext context) =>
+        context.Items.TryGetValue("RequestId", out var id) ? id?.ToString() : null;
+
     app.Run();
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Unexpected error causing the application to stop.");
+
+    // Fail-fast must also be visible to Docker/systemd: a non-zero exit code triggers a restart
+    // policy instead of leaving a half-initialized process.
+    Environment.ExitCode = 1;
 }
 finally
 {

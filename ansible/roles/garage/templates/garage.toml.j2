@@ -1,0 +1,26 @@
+metadata_dir = "{{ garage_meta_dir }}"
+data_dir = "{{ garage_data_dir }}"
+db_engine = "sqlite"
+replication_factor = {{ garage_replication_factor }}
+consistency_mode = "{{ garage_consistency_mode }}"
+
+{% set rpc_host = (garage_rpc_public_addrs | default({}))[inventory_hostname] | default(garage_rpc_public_addr | default(ansible_host)) %}
+rpc_bind_addr = "{{ garage_rpc_bind }}"
+rpc_public_addr = "{{ rpc_host }}:{{ garage_rpc_port }}"
+rpc_secret = "{{ garage_rpc_secret }}"
+
+{% if garage_bootstrap_peers is defined and garage_bootstrap_peers | length > 0 %}
+bootstrap_peers = [
+{% for peer in garage_bootstrap_peers %}
+  "{{ peer }}",
+{% endfor %}
+]
+{% endif %}
+
+[s3_api]
+s3_region = "{{ garage_s3_region }}"
+api_bind_addr = "{{ garage_s3_bind }}"
+
+[s3_web]
+bind_addr = "{{ garage_web_bind }}"
+root_domain = "{{ garage_web_root_domain }}"

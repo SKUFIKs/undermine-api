@@ -39,6 +39,7 @@
 		<!-- Auth & Security -->
 		<PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
 		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
 
 		<!-- API Versioning for ASP.NET Core (.NET 8/9 standard) -->

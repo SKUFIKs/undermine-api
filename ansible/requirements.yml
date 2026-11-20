@@ -1,0 +1,18 @@
+---
+# Install with: ansible-galaxy collection install -r requirements.yml
+#
+# If galaxy.ansible.com returns the KeyError: 'results' bug, install
+# community.hashi_vault directly from GitHub:
+#
+#   git clone --depth 1 --branch 7.1.0 \
+#     https://github.com/ansible-collections/community.hashi_vault.git \
+#     ~/.ansible/collections/ansible_collections/community/hashi_vault
+collections:
+  - name: community.general
+    version: ">=9.0.0"
+  - name: community.postgresql
+    version: ">=3.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.hashi_vault
+    version: ">=7.0.0"

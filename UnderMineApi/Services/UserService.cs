@@ -4,6 +4,7 @@ using UnderMineApi.DTOs;
 using UnderMineApi.Models;
 using UnderMineApi.Services.Interfaces;
 using UnderMineApi.Services.PasswordHasher;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Services
 {
@@ -13,13 +14,23 @@ namespace UnderMineApi.Services
         private readonly IPasswordHasher _hasher;
         private readonly ILogger<UserService> _logger;
         private readonly AdminAuditService _audit;
+        private readonly IUserAccessService _access;
+        private readonly IJwtService _jwtService;
 
-        public UserService(AppDbContext context, IPasswordHasher hasher, ILogger<UserService> logger, AdminAuditService audit)
+        public UserService(
+            AppDbContext context,
+            IPasswordHasher hasher,
+            ILogger<UserService> logger,
+            AdminAuditService audit,
+            IUserAccessService access,
+            IJwtService jwtService)
         {
             _context = context;
             _hasher = hasher;
             _logger = logger;
             _audit = audit;
+            _access = access;
+            _jwtService = jwtService;
         }
 
         public async Task<object> GetPagedUsersAsync(int page, int pageSize, CancellationToken cancellationToken = default)
@@ -152,6 +163,10 @@ namespace UnderMineApi.Services
 
             await _context.SaveChangesAsync(cancellationToken);
 
+            // The old JWT still carries the previous role; drop the cached snapshot so the next
+            // request forces a fresh check (and a re-login for the affected user).
+            _access.Invalidate(id);
+
             _logger.LogInformation("Role for user {UserId} changed from {OldRole} to {NewRole} by {Actor}", id, oldRole, normalizedRole, actor);
 
             await _audit.LogAsync(actor, "change_role", "user", id, $"Role changed from {oldRole} to {normalizedRole}", cancellationToken);
@@ -180,6 +195,8 @@ namespace UnderMineApi.Services
             _context.UserBans.Add(ban);
             await _context.SaveChangesAsync(cancellationToken);
 
+            _access.Invalidate(id);
+
             _logger.LogInformation("User {UserId} banned by {Actor}", id, actor);
             await _audit.LogAsync(actor, "ban_user", "user", id, request.Reason, cancellationToken);
             return (true, null);
@@ -193,6 +210,8 @@ namespace UnderMineApi.Services
             foreach (var ban in activeBans) ban.IsActive = false;
             await _context.SaveChangesAsync(cancellationToken);
 
+            _access.Invalidate(id);
+
             _logger.LogInformation("User {UserId} unbanned by {Actor}", id, actor);
             await _audit.LogAsync(actor, "unban_user", "user", id, null, cancellationToken);
             return (true, null);
@@ -200,15 +219,51 @@ namespace UnderMineApi.Services
 
         public async Task<(bool Success, string? Error)> ChangePasswordAsync(long id, string newPassword, string actor, CancellationToken cancellationToken = default)
         {
+            if (!PasswordPolicy.TryValidate(newPassword, out _))
+                return (false, "INVALID_PASSWORD");
+
             var user = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
             if (user == null) return (false, "USER_NOT_FOUND");
 
             user.HashPassword = _hasher.HashPassword(newPassword);
+            user.TokenVersion++;
             await _context.SaveChangesAsync(cancellationToken);
+            _access.Invalidate(id);
 
             _logger.LogInformation("Password for user {UserId} changed by {Actor}", id, actor);
             await _audit.LogAsync(actor, "change_password", "user", id, null, cancellationToken);
             return (true, null);
+        }
+
+        public async Task<ChangeOwnPasswordResult> ChangeOwnPasswordAsync(
+            long userId,
+            string currentPassword,
+            string newPassword,
+            CancellationToken cancellationToken = default)
+        {
+            var user = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            if (user == null)
+                return new ChangeOwnPasswordResult(false, "USER_NOT_FOUND", "User not found.", null, 0);
+
+            if (!_hasher.VerifyPassword(currentPassword, user.HashPassword))
+                return new ChangeOwnPasswordResult(false, "INVALID_CURRENT_PASSWORD", "Current password is incorrect.", null, 0);
+
+            if (!PasswordPolicy.TryValidate(newPassword, out var policyError))
+                return new ChangeOwnPasswordResult(false, "WEAK_PASSWORD", policyError, null, 0);
+
+            if (_hasher.VerifyPassword(newPassword, user.HashPassword))
+                return new ChangeOwnPasswordResult(false, "SAME_PASSWORD", "The new password must differ from the current one.", null, 0);
+
+            user.HashPassword = _hasher.HashPassword(newPassword);
+            user.TokenVersion++;
+            await _context.SaveChangesAsync(cancellationToken);
+            _access.Invalidate(user.Id);
+
+            _logger.LogInformation("Password for user {UserId} changed by the user", userId);
+            await _audit.LogAsync(user.Username, "change_own_password", "user", userId, null, cancellationToken);
+
+            var token = _jwtService.GenerateToken(user);
+            return new ChangeOwnPasswordResult(true, null, null, token, (int)TimeSpan.FromDays(30).TotalSeconds);
         }
     }
 }

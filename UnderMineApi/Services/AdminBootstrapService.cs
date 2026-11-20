@@ -10,7 +10,9 @@ using Microsoft.Extensions.Logging;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.Models;
+using UnderMineApi.Services.Interfaces;
 using UnderMineApi.Services.PasswordHasher;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Services
 {
@@ -72,17 +74,20 @@ namespace UnderMineApi.Services
         private readonly IConfiguration _config;
         private readonly IPasswordHasher _hasher;
         private readonly ILogger<AdminBootstrapService> _logger;
+        private readonly IUserAccessService _access;
 
         public AdminBootstrapService(
             AppDbContext context,
             IConfiguration config,
             IPasswordHasher hasher,
-            ILogger<AdminBootstrapService> logger)
+            ILogger<AdminBootstrapService> logger,
+            IUserAccessService access)
         {
             _context = context;
             _config = config;
             _hasher = hasher;
             _logger = logger;
+            _access = access;
         }
 
         public async Task<BootstrapAdminResult> EnsureAdminAsync(CancellationToken ct = default)
@@ -93,8 +98,16 @@ namespace UnderMineApi.Services
                 return new BootstrapAdminResult { Skipped = true, Reason = "disabled by BootstrapAdmin:Enabled" };
             }
 
-            var configuredUser = _config["BootstrapAdmin:Username"]?.Trim();
+            // Standard ASP.NET configuration uses BootstrapAdmin__Username/Password
+            // (section BootstrapAdmin). The flat names are kept for backward compatibility
+            // with older .env files and docker-compose mappings.
+            var configuredUser = _config["BootstrapAdmin:Username"];
+            if (string.IsNullOrWhiteSpace(configuredUser))
+                configuredUser = _config["BootstrapAdminUsername"];
+
             var configuredPassword = _config["BootstrapAdmin:Password"];
+            if (string.IsNullOrEmpty(configuredPassword))
+                configuredPassword = _config["BootstrapAdminPassword"];
 
             var hasUser = !string.IsNullOrWhiteSpace(configuredUser);
             var hasPassword = !string.IsNullOrEmpty(configuredPassword);
@@ -119,6 +132,15 @@ namespace UnderMineApi.Services
         /// </summary>
         private async Task<BootstrapAdminResult> UpsertFixedAsync(string username, string password, CancellationToken ct)
         {
+            if (!PasswordPolicy.TryValidate(password, out var policyError))
+            {
+                _logger.LogError(
+                    "BootstrapAdmin:Password is rejected: {Reason}. Fix it in .env and restart.",
+                    policyError);
+
+                return new BootstrapAdminResult { Skipped = true, Reason = policyError };
+            }
+
             var login = username.Trim().ToLowerInvariant();
             var existing = await _context.McAuthAccounts
                 .Include(u => u.Stats)
@@ -137,13 +159,23 @@ namespace UnderMineApi.Services
 
             existing.HashPassword = _hasher.HashPassword(password);
             existing.Role = "admin";
+            existing.TokenVersion++;
             if (existing.Stats == null)
                 existing.Stats = NewStats();
 
+            // This path is the documented recovery route. An active ban would otherwise keep the
+            // reset account locked out, so recovery also lifts bans on that account.
+            var activeBans = await _context.UserBans
+                .Where(b => b.UserId == existing.Id && b.IsActive)
+                .ToListAsync(ct);
+            foreach (var ban in activeBans)
+                ban.IsActive = false;
+
             await _context.SaveChangesAsync(ct);
+            _access.Invalidate(existing.Id);
 
             _logger.LogWarning(
-                "Reset admin account '{Login}' from BootstrapAdmin:Username/Password - password and role were overwritten",
+                "Reset admin account '{Login}' from BootstrapAdmin:Username/Password - password and role were overwritten, active bans lifted",
                 login);
 
             return new BootstrapAdminResult { Created = true, Username = login, Reason = "reset from configuration" };

@@ -46,9 +46,9 @@
 
 | Политика | Описание | Примеры |
 |----------|----------|---------|
-| `FORCE_SYNC` | Всегда перезаписывать | libraries, client.jar, mods, runtime |
-| `DOWNLOAD_ONCE` | Скачать если нет, не перезаписывать | options.txt, конфиги модов |
-| `PRESERVE` | Никогда не удалять и не перезаписывать | saves, screenshots, resourcepacks |
+| `FORCE_SYNC` | Всегда перезаписывать | libraries, client.jar, mods, runtime, shaderpacks, resourcepacks, config |
+| `DOWNLOAD_ONCE` | Скачать если нет, не перезаписывать | options.txt, launcher_profiles.json |
+| `PRESERVE` | Никогда не удалять и не перезаписывать | saves, screenshots, logs, crash-reports, backups, local, emblems, playerdata, stats, advancements, realms, servers.dat, usercache.json, usernamecache.json |
 
 ## Структура директорий
 

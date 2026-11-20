@@ -91,8 +91,8 @@
 ## Статусы сборок
 
 ```
-pending → downloading → hashing → uploading → completed
-                                         ↘ failed
+pending → downloading → hashing → completed
+                                ↘ failed
 ```
 
 ## Живой прогресс и логи сборки
@@ -176,7 +176,7 @@ docker-compose up -d
 - PostgreSQL: `localhost:5432`
 - MinIO: `localhost:9000` (console: `localhost:9001`)
 - Nginx CDN: `localhost:8080`
-- API: `localhost:5000`
+- API: `localhost:8080` (через nginx) или `localhost:5000` (только с хоста)
 
 ## Использование
 

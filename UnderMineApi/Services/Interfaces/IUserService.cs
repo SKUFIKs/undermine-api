@@ -3,6 +3,14 @@ using UnderMineApi.Models;
 
 namespace UnderMineApi.Services.Interfaces
 {
+    /// <summary>Result of a self-service password change; a fresh JWT is returned on success.</summary>
+    public sealed record ChangeOwnPasswordResult(
+        bool Success,
+        string? Error,
+        string? Message,
+        string? Token,
+        int ExpiresIn);
+
     public interface IUserService
     {
         Task<object> GetPagedUsersAsync(int page, int pageSize, CancellationToken cancellationToken = default);
@@ -11,5 +19,8 @@ namespace UnderMineApi.Services.Interfaces
         Task<(bool Success, string? Error)> UnbanUserAsync(long id, string actor, CancellationToken cancellationToken = default);
         Task<(bool Success, string? Error)> ChangePasswordAsync(long id, string newPassword, string actor, CancellationToken cancellationToken = default);
         Task<(bool Success, string? Error)> ChangeUserRoleAsync(long id, string newRole, string actor, CancellationToken cancellationToken = default);
+
+        /// <summary>Changes the caller's own password (requires the current one) and revokes old tokens.</summary>
+        Task<ChangeOwnPasswordResult> ChangeOwnPasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken cancellationToken = default);
     }
 }

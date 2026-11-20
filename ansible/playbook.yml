@@ -1,0 +1,100 @@
+---
+- name: Load variables from HashiCorp Vault
+  hosts: all
+  gather_facts: false
+  connection: local
+  tags: [always]
+  roles:
+    - vault_secrets
+
+- name: Basic server configuration
+  hosts: all:!staging
+  become: true
+  tags: [common]
+  roles:
+    - common
+
+- name: Install Docker and create project directories
+  hosts: all:!staging
+  become: true
+  tags: [docker]
+  roles:
+    - docker
+- name: Install nginx and TLS certificates
+  hosts:
+    - prod_primary
+    - prod_standby
+  become: true
+  tags: [nginx]
+  roles:
+    - nginx
+
+- name: Prepare PostgreSQL replication tunnel key
+  hosts: prod_standby
+  become: true
+  gather_facts: false
+  tags: [postgres]
+  tasks:
+    - name: Generate and publish the tunnel key
+      ansible.builtin.include_role:
+        name: postgres
+        tasks_from: tunnel-key.yml
+
+- name: Configure PostgreSQL Cluster (Primary, Replica, Staging)
+  hosts: postgres_cluster
+  become: true
+  tags: [postgres]
+  roles:
+    - postgres
+
+- name: Configure Garage S3
+  hosts: garage
+  become: true
+  tags: [garage]
+  roles:
+    - garage
+
+- name: Stop staging before activating the standby API
+  hosts: prod_standby
+  become: true
+  gather_facts: false
+  tags: [app, failover]
+  tasks:
+    - name: Stop the staging compose project
+      ansible.builtin.command: >-
+        docker compose --project-name
+        {{ (hostvars['staging-1'] | default({})).get('app_project_name', 'undermine-staging') }}
+        -f {{ (hostvars['staging-1'] | default({})).get('app_dir', '/srv/undermine/staging') }}/docker-compose.yml
+        stop api
+      become: false
+      register: staging_stop
+      changed_when: >-
+        'Stopped' in staging_stop.stdout
+        or 'Stopping' in staging_stop.stderr
+      failed_when: false
+      when: (app_start | default(hostvars[inventory_hostname]['app_start'] | default(false))) | bool
+
+- name: Deploy the API container
+  hosts:
+    - prod_primary
+    - prod_standby
+    - prod_dr
+  become: true
+  tags: [app]
+  roles:
+    - app
+
+- name: Deploy staging API
+  hosts: staging
+  become: true
+  tags: [staging, never]
+  pre_tasks:
+    - name: Refuse to start staging while the standby API is active
+      ansible.builtin.assert:
+        that:
+          - not ((hostvars['prod-2-de'] | default({})).get('app_start', false) | bool)
+        fail_msg: >-
+          The standby API is active on prod-2. Stop it and set
+          app_start=false for prod-2-de before deploying staging.
+  roles:
+    - app

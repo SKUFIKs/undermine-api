@@ -1,0 +1,27 @@
+---
+# Target the concrete cluster units, not the postgresql.service wrapper:
+# the wrapper reports success even when one of the clusters failed to start.
+- name: Restart PostgreSQL
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-main"
+    state: restarted
+
+- name: Reload PostgreSQL
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-main"
+    state: reloaded
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart PostgreSQL Staging
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-staging"
+    state: restarted
+
+- name: Restart PostgreSQL Tunnel
+  ansible.builtin.systemd:
+    name: pg-tunnel
+    state: restarted
+    daemon_reload: true

@@ -1,0 +1,152 @@
+---
+- name: Require a real Cloudflare token
+  ansible.builtin.assert:
+    that:
+      - cloudflare_token is defined
+      - cloudflare_token | length > 20
+      - cloudflare_token != 'CHANGE_ME'
+    fail_msg: >-
+      cloudflare_token is missing or still a placeholder in HashiCorp Vault
+      (secret/undermine-api/tokens by default). Refusing to continue.
+
+- name: Install Nginx, Certbot and Cloudflare DNS plugin
+  ansible.builtin.apt:
+    name: "{{ required_packages }}"
+    state: present
+    update_cache: true
+
+- name: Ensure .secrets directory exists
+  ansible.builtin.file:
+    path: /root/.secrets
+    state: directory
+    mode: '0700'
+
+# Separate file on purpose: deploy_ansible's `doh` role owns
+# /root/.secrets/cloudflare.ini and renews docs.example.com with it.
+# This role must never overwrite that file.
+- name: Create Cloudflare credentials file for API certificates
+  ansible.builtin.copy:
+    dest: "{{ cloudflare_credentials_file }}"
+    content: |
+      dns_cloudflare_api_token = {{ cloudflare_token }}
+    mode: '0600'
+    owner: root
+    group: root
+  no_log: true
+
+- name: Issue SSL certificate via DNS-01 (only if missing)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly --dns-cloudflare
+      --dns-cloudflare-credentials {{ cloudflare_credentials_file }}
+      --cert-name {{ api_url }}
+      -d {{ api_url }}
+      -d {{ staging_url }}
+      -d {{ cdn_url }}
+      --email {{ api_email }}
+      --agree-tos --non-interactive
+      --dns-cloudflare-propagation-seconds 20
+  args:
+    creates: /etc/letsencrypt/live/{{ api_url }}/fullchain.pem
+  when: not ansible_check_mode
+
+- name: Ensure ACME webroot exist
+  ansible.builtin.file:
+    path: /var/www/certbot
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Require the staging basic auth secret when enabled
+  ansible.builtin.assert:
+    that:
+      - not (staging_basic_auth_enabled | bool)
+        or (vault_staging_basic_auth | default('') | length > 0)
+    fail_msg: >-
+      Set Vault tokens.staging_basic_auth to the staging basic-auth password
+      and set staging_basic_auth_enabled=true, or leave basic auth disabled.
+      Without basic auth the staging vhost denies /api/ and /admin/
+      (only /health and /builds/ stay public).
+  when: inventory_hostname in groups['prod_standby']
+
+- name: Generate the staging basic auth hash
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - passwd
+      - -apr1
+      - -stdin
+    stdin: "{{ vault_staging_basic_auth }}"
+  register: staging_basic_auth_hash
+  changed_when: false
+  no_log: true
+  when:
+    - inventory_hostname in groups['prod_standby']
+    - staging_basic_auth_enabled | bool
+
+- name: Write the staging basic auth file
+  ansible.builtin.copy:
+    dest: "{{ staging_basic_auth_file }}"
+    content: "{{ staging_basic_auth_user }}:{{ staging_basic_auth_hash.stdout }}\n"
+    owner: root
+    group: www-data
+    mode: '0640'
+  no_log: true
+  when:
+    - inventory_hostname in groups['prod_standby']
+    - staging_basic_auth_enabled | bool
+
+- name: Deploy site configuration
+  ansible.builtin.template:
+    src: undermine.conf.j2
+    dest: /etc/nginx/sites-available/{{ api_url }}.conf
+    mode: '0644'
+  notify: Restart nginx
+
+- name: Enable the nginx site(create symlink)
+  # In check mode the template above is not written, so the symlink would fail
+  # on a missing src. Skip it; a real run creates the file first.
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/{{ api_url }}.conf
+    dest: /etc/nginx/sites-enabled/{{ api_url }}.conf
+    state: link
+  when: not ansible_check_mode
+  notify: Restart nginx
+
+- name: Deploy the staging site configuration
+  ansible.builtin.template:
+    src: staging.conf.j2
+    dest: /etc/nginx/sites-available/{{ staging_url }}.conf
+    mode: '0644'
+  when: inventory_hostname in groups['prod_standby']
+  notify: Restart nginx
+
+- name: Enable the staging site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/{{ staging_url }}.conf
+    dest: /etc/nginx/sites-enabled/{{ staging_url }}.conf
+    state: link
+  when:
+    - inventory_hostname in groups['prod_standby']
+    - not ansible_check_mode
+  notify: Restart nginx
+
+- name: Remove the staging site from non-staging hosts
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/{{ staging_url }}.conf
+    state: absent
+  when: inventory_hostname not in groups['prod_standby']
+  notify: Restart nginx
+
+- name: Validate Nginx configuration
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Ensure Nginx is running and enabled
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true

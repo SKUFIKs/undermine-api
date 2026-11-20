@@ -1,0 +1,177 @@
+---
+- name: Require an immutable API image
+  ansible.builtin.assert:
+    that:
+      - api_image is defined
+      - api_image | length > 0
+      - api_image is search(':sha-') or api_image is search('@sha256:')
+    fail_msg: >-
+      Set api_image to an immutable image, for example
+      ghcr.io/<owner>/undermine-api:sha-<commit>. The :latest tag is not allowed.
+
+- name: Check the compose file on the controller
+  ansible.builtin.stat:
+    path: "{{ app_compose_source }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: app_compose_stat
+
+- name: Require compose file and Vault app environment variables
+  ansible.builtin.assert:
+    that:
+      - app_compose_stat.stat.exists
+      - app_env_vars is defined
+      - app_env_vars is mapping
+      - vault_app_pass | default('') | length > 0
+      - app_env_vars['S3__Endpoint'] | default('') | length > 0
+      - app_env_vars['S3__AccessKey'] | default('') | length > 0
+      - app_env_vars['S3__SecretKey'] | default('') | length > 0
+      - app_env_vars['S3__Bucket'] | default('') | length > 0
+      - (app_env_vars['S3__CdnBaseUrl'] | default('')) is search('https://')
+    fail_msg: >-
+      Missing {{ app_compose_source }} or Vault variables.
+      app_env_vars must contain S3__Endpoint, S3__AccessKey, S3__SecretKey,
+      S3__Bucket and an absolute S3__CdnBaseUrl (https://...).
+  run_once: true
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ app_owner }}"
+    group: "{{ app_group }}"
+    mode: '0775'
+
+- name: Create the bind-mounted data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_owner }}"
+    group: "{{ app_group }}"
+    mode: '0775'
+  loop: "{{ app_data_dirs }}"
+
+- name: Install the compose file
+  ansible.builtin.copy:
+    src: "{{ app_compose_source }}"
+    dest: "{{ app_compose_dest }}"
+    owner: "{{ app_owner }}"
+    group: "{{ app_group }}"
+    mode: '0644'
+
+- name: Render the environment file from Vault
+  ansible.builtin.template:
+    src: env.production.j2
+    dest: "{{ app_env_dest }}"
+    owner: "{{ app_owner }}"
+    group: "{{ app_group }}"
+    mode: '0600'
+  no_log: true
+
+- name: Check Docker access for the deploy user
+  ansible.builtin.command: docker info
+  become: false
+  changed_when: false
+
+- name: Validate the compose file
+  ansible.builtin.command: >-
+    docker compose --project-name {{ app_project_name }}
+    -f {{ app_compose_dest }} config --quiet
+  become: false
+  environment:
+    API_IMAGE: "{{ api_image }}"
+  changed_when: false
+
+- name: Log in to GHCR
+  ansible.builtin.command:
+    argv:
+      - docker
+      - login
+      - ghcr.io
+      - --username
+      - "{{ ghcr_username }}"
+      - --password-stdin
+    stdin: "{{ ghcr_token }}"
+  become: false
+  no_log: true
+  changed_when: false
+  when:
+    - ghcr_username | default('') | length > 0
+    - ghcr_token | default('') | length > 0
+
+- name: Pull the API image
+  ansible.builtin.command: docker pull {{ api_image }}
+  become: false
+  register: app_pull
+  changed_when: >-
+    'Downloaded newer image' in app_pull.stdout
+    or 'Pull complete' in app_pull.stderr
+
+- name: Stop the API before applying migrations
+  ansible.builtin.command: >-
+    docker compose --project-name {{ app_project_name }}
+    {{ app_profile_args }}
+    -f {{ app_compose_dest }} stop api
+  become: false
+  environment:
+    API_IMAGE: "{{ api_image }}"
+  register: app_stop
+  changed_when: >-
+    'Stopped' in app_stop.stdout
+    or 'Stopping' in app_stop.stderr
+  failed_when: false
+  when:
+    - app_run_migrations | bool
+    - app_start | bool
+
+- name: Apply database migrations as a one-shot container
+  ansible.builtin.command: >-
+    docker run --rm --network host
+    --env-file {{ app_env_dest }}
+    -e Database__MigrateOnStartup=false
+    {{ api_image }} --migrate-only
+  become: false
+  changed_when: true
+  when: app_run_migrations | bool
+
+- name: Start the API
+  ansible.builtin.command: >-
+    docker compose --project-name {{ app_project_name }}
+    {{ app_profile_args }}
+    -f {{ app_compose_dest }} up -d --remove-orphans --force-recreate
+  become: false
+  environment:
+    API_IMAGE: "{{ api_image }}"
+    BUILD_WORKER_ENABLED: "{{ app_worker_enabled | bool | lower }}"
+  register: app_up
+  changed_when: >-
+    'Started' in app_up.stdout
+    or 'Created' in app_up.stdout
+    or 'Recreated' in app_up.stdout
+  when: app_start | bool
+
+- name: Keep the standby/DR API stopped
+  ansible.builtin.command: >-
+    docker compose --project-name {{ app_project_name }}
+    {{ app_profile_args }}
+    -f {{ app_compose_dest }} down --remove-orphans
+  become: false
+  environment:
+    API_IMAGE: "{{ api_image }}"
+  register: app_down
+  changed_when: "'Removed' in app_down.stdout"
+  when:
+    - not (app_start | bool)
+    - app_stop_when_inactive | bool
+
+- name: Wait for the API readiness endpoint
+  ansible.builtin.uri:
+    url: "{{ app_health_url }}"
+    status_code: 200
+    return_content: false
+  register: app_health
+  until: app_health.status == 200
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  when: app_start | bool

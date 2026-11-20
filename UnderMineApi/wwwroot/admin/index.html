@@ -142,6 +142,21 @@
                             </thead>
                             <tbody></tbody>
                         </table>
+                        <div class="table-pager">
+                            <button id="builds-prev" class="btn btn-sm" disabled>Previous</button>
+                            <span id="builds-page-info" class="muted">Page 1</span>
+                            <button id="builds-next" class="btn btn-sm" disabled>Next</button>
+                            <span class="spacer"></span>
+                            <label class="muted" for="builds-status-filter">Status</label>
+                            <select id="builds-status-filter">
+                                <option value="">All</option>
+                                <option value="pending">Pending</option>
+                                <option value="downloading">Downloading</option>
+                                <option value="hashing">Hashing</option>
+                                <option value="completed">Completed</option>
+                                <option value="failed">Failed</option>
+                            </select>
+                        </div>
                     </div>
                 </section>
 

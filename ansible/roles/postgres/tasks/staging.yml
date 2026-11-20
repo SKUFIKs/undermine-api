@@ -1,0 +1,64 @@
+- name: Check if Staging cluster exists
+  ansible.builtin.stat:
+    path: "/etc/postgresql/{{ pg_version }}/staging/postgresql.conf"
+  register: staging_cluster_conf
+
+- name: Create Staging cluster
+  ansible.builtin.command: >
+    pg_createcluster {{ pg_version }} staging --port 5433
+    --datadir {{ pg_staging_data }}
+  when: not staging_cluster_conf.stat.exists
+  changed_when: true
+
+- name: Create systemd override directory for Staging limits
+  ansible.builtin.file:
+    path: "/etc/systemd/system/postgresql@{{ pg_version }}-staging.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Apply CPU/RAM limits to Staging
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/postgresql@{{ pg_version }}-staging.service.d/override.conf"
+    content: |
+      [Service]
+      CPUQuota=50%
+      MemoryMax=2G
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Configure pg_hba.conf for Staging
+  ansible.builtin.blockinfile:
+    path: "/etc/postgresql/{{ pg_version }}/staging/pg_hba.conf"
+    marker: "# {mark} ANSIBLE MANAGED STAGING BLOCK"
+    block: |
+      host    undermine_staging  undermine_staging_app  127.0.0.1/32  scram-sha-256
+  notify: Restart PostgreSQL Staging
+
+- name: Start and enable Staging cluster
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-staging"
+    state: started
+    enabled: true
+
+- name: Create Staging Database and User
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "undermine_staging_app"
+    password: "{{ vault_staging_pass }}"
+    login_port: 5433
+    state: present
+    no_password_changes: false
+  no_log: true
+
+- name: Create Staging Database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "undermine_staging"
+    owner: "undermine_staging_app"
+    login_port: 5433

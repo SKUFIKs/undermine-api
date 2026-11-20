@@ -1,0 +1,89 @@
+---
+- name: Install PostgreSQL on Replica
+  ansible.builtin.apt:
+    name: "postgresql-{{ pg_version }}"
+    state: present
+
+- name: Deploy the replication tunnel service
+  ansible.builtin.template:
+    src: pg-tunnel.service.j2
+    dest: /etc/systemd/system/pg-tunnel.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart PostgreSQL Tunnel
+
+- name: Start and enable the replication tunnel
+  ansible.builtin.systemd:
+    name: pg-tunnel
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for the tunnel to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ pg_tunnel_port }}"
+    timeout: 30
+
+- name: Check if the replica is already initialized
+  ansible.builtin.stat:
+    path: "{{ pg_new_data }}/PG_VERSION"
+  register: replica_initialized
+
+- name: Ensure PostgreSQL is stopped before basebackup
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-main"
+    state: stopped
+  when: not replica_initialized.stat.exists
+
+- name: Remove an incomplete replica data directory
+  ansible.builtin.file:
+    path: "{{ pg_new_data }}"
+    state: absent
+  when: not replica_initialized.stat.exists
+
+- name: Create an empty replica data directory
+  ansible.builtin.file:
+    path: "{{ pg_new_data }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  when: not replica_initialized.stat.exists
+
+- name: Run pg_basebackup through the tunnel
+  become: true
+  become_user: postgres
+  environment:
+    PGPASSWORD: "{{ vault_repl_pass }}"
+    PGSSLMODE: "require"
+  ansible.builtin.command: >
+    pg_basebackup -h 127.0.0.1 -p {{ pg_tunnel_port }}
+    -U {{ repl_user }} -D {{ pg_new_data }} -Fp -Xs -P -R -c fast
+  args:
+    creates: "{{ pg_new_data }}/standby.signal"
+  when: not replica_initialized.stat.exists
+
+- name: Configure .pgpass for streaming replication
+  # pg_basebackup -R does not persist PGPASSWORD in primary_conninfo.
+  ansible.builtin.copy:
+    dest: /var/lib/postgresql/.pgpass
+    content: "127.0.0.1:{{ pg_tunnel_port }}:replication:{{ repl_user }}:{{ vault_repl_pass }}\n"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  no_log: true
+  notify: Restart PostgreSQL
+
+- name: Point data_directory at the new location (Replica)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/{{ pg_version }}/main/postgresql.conf
+    regexp: "^#?data_directory = "
+    line: "data_directory = '{{ pg_new_data }}'"
+
+- name: Start PostgreSQL on Replica
+  ansible.builtin.systemd:
+    name: "postgresql@{{ pg_version }}-main"
+    state: started
+    enabled: true

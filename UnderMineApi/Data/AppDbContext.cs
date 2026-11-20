@@ -30,6 +30,14 @@ namespace UnderMineApi.Data
                 entity.HasIndex(u => u.Username).IsUnique();
                 entity.Property(u => u.Role).HasDefaultValue("user");
 
+                // Registration limits filter by device and by registration subnet on every
+                // registration request.
+                entity.Property(u => u.DeviceId).HasMaxLength(128);
+                entity.Property(u => u.RegIpPrefix).HasMaxLength(64);
+                entity.HasIndex(u => u.DeviceId);
+                entity.HasIndex(u => u.RegIp);
+                entity.HasIndex(u => u.RegIpPrefix);
+
                 entity.HasOne(u => u.Stats)
                       .WithOne(s => s.Account)
                       .HasForeignKey<UserData>(s => s.AccountId)
@@ -75,6 +83,9 @@ namespace UnderMineApi.Data
             {
                 entity.ToTable("build_instances");
                 entity.HasIndex(e => e.BuildId).IsUnique();
+                // Admin list: ORDER BY created_at DESC, optional status filter.
+                entity.HasIndex(e => e.CreatedAt);
+                entity.HasIndex(e => new { e.Status, e.CreatedAt });
                 entity.Property(e => e.Status).HasMaxLength(50);
                 entity.Property(e => e.Name).HasMaxLength(100);
                 entity.Property(e => e.LoaderType).HasMaxLength(50);
@@ -102,6 +113,7 @@ namespace UnderMineApi.Data
                 entity.ToTable("build_logs");
                 entity.Property(e => e.Level).HasMaxLength(10);
                 entity.HasIndex(e => e.BuildInstanceId); // Log reads are always per-build
+                entity.HasIndex(e => e.CreatedAt);       // Retention deletes by age
                 entity.HasOne(e => e.BuildInstance)
                       .WithMany()
                       .HasForeignKey(e => e.BuildInstanceId)

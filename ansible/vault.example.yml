@@ -1,0 +1,22 @@
+---
+# OBSOLETE ansible-vault template.
+#
+# The playbook now reads every variable from HashiCorp Vault KV v2
+# (community.hashi_vault.vault_kv2_get), see ansible/hashicorp-vault.config.example.json.
+#
+# This file is kept only as a reference for migrating old values.
+# Do not use it for new deployments.
+
+# Cloudflare DNS-01 token (Zone:DNS:Edit for the zone only).
+cloudflare_token: CHANGE_ME_CLOUDFLARE_API_TOKEN
+
+# PostgreSQL application/replication/staging passwords.
+vault_app_pass: CHANGE_ME_LONG_RANDOM
+vault_repl_pass: CHANGE_ME_LONG_RANDOM
+vault_staging_pass: CHANGE_ME_LONG_RANDOM
+
+# Shared Garage RPC secret (64 hex characters, identical on all three nodes).
+garage_rpc_secret: CHANGE_ME_64_HEX_CHARS
+
+# Optional GHCR token for a private API image.
+ghcr_token: ""

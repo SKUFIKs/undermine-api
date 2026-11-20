@@ -1,0 +1,140 @@
+---
+- name: Require a Garage zone for every node
+  ansible.builtin.assert:
+    that:
+      - hostvars[item]['garage_zone'] is defined
+      - hostvars[item]['garage_zone'] | length > 0
+    fail_msg: "Set garage_zone in group_vars/prod_*.yml"
+  loop: "{{ groups['garage'] }}"
+  run_once: true
+
+- name: Wait until all Garage nodes are connected
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} status
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_status
+  changed_when: false
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  retries: 30
+  delay: 5
+  until: >-
+    (garage_status.stdout_lines | select('match', '^[0-9a-f]{16}') | list | length)
+    == (groups['garage'] | length)
+
+- name: Assign Garage layout
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} layout assign
+    -z {{ hostvars[item]['garage_zone'] }}
+    -c {{ garage_capacity }}
+    {{ hostvars[item]['garage_node_id'] }}
+  become: true
+  become_user: "{{ garage_user }}"
+  loop: "{{ groups['garage'] }}"
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  changed_when: true
+  when: garage_status.stdout is search('NO ROLE ASSIGNED')
+
+- name: Apply Garage layout
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} layout apply --version 1
+  become: true
+  become_user: "{{ garage_user }}"
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  changed_when: true
+  when: garage_status.stdout is search('NO ROLE ASSIGNED')
+
+- name: List Garage keys
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} key list
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_keys
+  changed_when: false
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+
+- name: Check the Garage API key file
+  ansible.builtin.stat:
+    path: "{{ garage_api_key_file }}"
+  register: garage_api_key_file_stat
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+
+- name: Read the existing Garage API key id
+  ansible.builtin.shell: >-
+    awk -F= '/^S3__AccessKey=/ { print $2 }' {{ garage_api_key_file }}
+  register: garage_existing_key_id
+  changed_when: false
+  no_log: true
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  when: garage_api_key_file_stat.stat.exists
+
+- name: Refuse to continue when the key exists but its secret file is missing
+  ansible.builtin.fail:
+    msg: >-
+      Garage key "{{ garage_api_key_name }}" exists, but {{ garage_api_key_file }}
+      is missing. The secret cannot be recovered. Delete the key with
+      `garage key delete --yes <key-id>` and re-run this playbook,
+      then update deploy/.env.production.
+  run_once: true
+  when:
+    - garage_api_key_name in garage_keys.stdout
+    - not garage_api_key_file_stat.stat.exists
+
+- name: Create the Garage API key
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} key create
+    {{ garage_api_key_name }}
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_key_create
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  changed_when: true
+  no_log: true
+  when: garage_api_key_name not in garage_keys.stdout
+
+- name: Set the Garage API key id
+  ansible.builtin.set_fact:
+    garage_api_key_id: >-
+      {{ (garage_existing_key_id.stdout | trim)
+         if garage_api_key_file_stat.stat.exists
+         else (garage_key_create.stdout | regex_search('Key ID:\s*(\S+)', '\1') | first) }}
+  run_once: true
+
+- name: Read the new Garage API key secret
+  ansible.builtin.set_fact:
+    garage_api_key_secret: >-
+      {{ garage_key_create.stdout | regex_search('Secret key:\s*(\S+)', '\1') | first }}
+  run_once: true
+  no_log: true
+  when: not garage_api_key_file_stat.stat.exists
+
+- name: Save the Garage API key to a root-only file
+  ansible.builtin.copy:
+    dest: "{{ garage_api_key_file }}"
+    content: |
+      S3__AccessKey={{ garage_api_key_id }}
+      S3__SecretKey={{ garage_api_key_secret }}
+    owner: root
+    group: root
+    mode: '0600'
+  run_once: true
+  delegate_to: "{{ groups['garage'][0] }}"
+  no_log: true
+  when: not garage_api_key_file_stat.stat.exists
+
+- name: Ensure the production Garage bucket
+  ansible.builtin.include_tasks: bucket.yml
+  vars:
+    garage_bucket_name: "{{ garage_bucket }}"
+
+- name: Ensure the staging Garage bucket
+  ansible.builtin.include_tasks: bucket.yml
+  vars:
+    garage_bucket_name: "{{ garage_staging_bucket }}"

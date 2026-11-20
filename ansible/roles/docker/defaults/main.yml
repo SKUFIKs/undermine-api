@@ -1,0 +1,17 @@
+---
+required_packages:
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+
+# Docker publishes amd64/arm64; Ansible reports x86_64/aarch64.
+docker_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+
+project_dirs:
+  - /srv/undermine/builds
+  - /srv/undermine/java
+  - /srv/undermine/nginx
+  - /srv/undermine/certs
+  # postgres and minio are owned by their own roles/services, not by this role.
+
+deploy_user: "{{ ansible_user }}"
