@@ -1,0 +1,20 @@
+---
+required_packages:
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - python3-certbot-dns-cloudflare
+  - openssl
+
+# Kept separate from deploy_ansible's /root/.secrets/cloudflare.ini.
+cloudflare_credentials_file: /root/.secrets/cloudflare-api.ini
+
+# Staging vhost access control (prod-2 only). With basic auth disabled the
+# vhost denies /api/ and /admin/; /health and /builds/ stay public.
+# vault_staging_basic_auth is the password; Ansible hashes it into the
+# htpasswd file, so Vault never stores an htpasswd line.
+staging_basic_auth_enabled: false
+staging_basic_auth_user: admin
+staging_basic_auth_file: /etc/nginx/.htpasswd-staging
+# Staging bucket served under /builds/ by the staging vhost.
+garage_staging_bucket: undermine-staging-builds

@@ -60,6 +60,16 @@ public class BuildLogResponse
     public DateTime CreatedAt { get; set; }
 }
 
+/// <summary>Generic page envelope for list endpoints.</summary>
+public class PagedResponse<T>
+{
+    public List<T> Items { get; set; } = new();
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalPages { get; set; }
+}
+
 public class ClientManifestResponse
 {
     public string BuildId { get; set; } = string.Empty;

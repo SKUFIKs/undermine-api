@@ -58,8 +58,9 @@ namespace UnderMineApi.Middleware
 
             await context.Response.WriteAsJsonAsync(new
             {
-                Error = "MAINTENANCE",
-                Message = "Server is under maintenance. Please try again later.",
+                status = StatusCodes.Status503ServiceUnavailable,
+                error = "MAINTENANCE",
+                message = "Server is under maintenance. Please try again later.",
                 request_id = requestId
             });
         }

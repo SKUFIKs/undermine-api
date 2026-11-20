@@ -1,0 +1,23 @@
+---
+- name: Ensure root .ssh directory exists
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Generate SSH key for the replication tunnel
+  ansible.builtin.command:
+    cmd: ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519_pg -C pg-tunnel
+    creates: /root/.ssh/id_ed25519_pg
+
+- name: Read the tunnel public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_ed25519_pg.pub
+  register: pg_tunnel_pub
+  changed_when: false
+
+- name: Publish the tunnel public key for the primary play
+  ansible.builtin.set_fact:
+    pg_tunnel_public_key: "{{ pg_tunnel_pub.content | b64decode | trim }}"

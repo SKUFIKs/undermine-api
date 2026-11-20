@@ -1,0 +1,90 @@
+{
+  "vars": {
+    "api_url": "api.example.com",
+    "staging_url": "staging.example.com",
+    "cdn_url": "cdn.example.com",
+    "api_email": "admin@example.com",
+    "deploy_ssh_public_key": "ssh-ed25519 AAAA... you@workstation",
+
+    "staging_basic_auth_enabled": false,
+
+    "s3_bucket": "undermine-builds",
+    "garage_web_root_domain": "cdn.example.com",
+    "garage_capacity": "10G",
+    "garage_bucket": "undermine-builds",
+    "garage_staging_bucket": "undermine-staging-builds",
+    "garage_api_key_name": "undermine-api",
+    "garage_api_key_file": "/etc/garage/undermine-api.key",
+    "garage_rpc_public_addrs": {
+      "prod-1-se": "203.0.113.10",
+      "prod-2-de": "203.0.113.20",
+      "prod-3-rf": "203.0.113.30"
+    },
+
+    "pgbackrest_repo_host": "203.0.113.30",
+    "pg_major_version": "18",
+    "pg_new_data": "/srv/undermine/postgres",
+    "pg_staging_data": "/srv/undermine/postgres-staging",
+    "app_user": "undermine_app",
+    "app_db_name": "undermine",
+    "repl_user": "undermine_repl",
+
+    "api_image": "",
+    "ghcr_username": "",
+
+    "mc_version": "RELEASE.2025-08-13T08-35-41Z"
+  },
+  "hosts": {
+    "prod-1-se": {
+      "garage_zone": "se",
+      "app_compose_file": "docker-compose.prod.yml",
+      "app_project_name": "undermine-prod",
+      "app_compose_profiles": [],
+      "app_start": true,
+      "app_run_migrations": true,
+      "app_worker_enabled": true
+    },
+    "prod-2-de": {
+      "garage_zone": "de",
+      "app_compose_file": "docker-compose.standby.yml",
+      "app_project_name": "undermine-standby",
+      "app_compose_profiles": ["failover-only"],
+      "app_start": false,
+      "app_run_migrations": false,
+      "app_worker_enabled": false
+    },
+    "prod-3-rf": {
+      "garage_zone": "rf",
+      "app_compose_file": "docker-compose.standby.yml",
+      "app_project_name": "undermine-dr",
+      "app_compose_profiles": ["failover-only"],
+      "app_start": false,
+      "app_run_migrations": false,
+      "app_worker_enabled": false
+    },
+    "staging-1": {
+      "garage_zone": "de",
+      "app_compose_file": "docker-compose.staging.yml",
+      "app_project_name": "undermine-staging",
+      "app_compose_profiles": [],
+      "app_start": true,
+      "app_run_migrations": true,
+      "app_worker_enabled": true,
+      "app_dir": "/srv/undermine/staging",
+      "app_env_file": ".env.staging",
+      "app_env_name": ".env.staging",
+      "app_db_name": "undermine_staging",
+      "app_user": "undermine_staging_app",
+      "pg_host": "127.0.0.1",
+      "pg_port": "5433",
+      "app_data_dirs": [
+        "/srv/undermine/staging/builds",
+        "/srv/undermine/staging/java"
+      ],
+      "app_env_overrides": {
+        "S3__Bucket": "undermine-staging-builds",
+        "S3__CdnBaseUrl": "https://staging-cdn.example.com"
+      }
+    }
+  }
+}

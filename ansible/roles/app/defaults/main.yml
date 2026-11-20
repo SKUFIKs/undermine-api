@@ -1,0 +1,50 @@
+---
+# Required: immutable image built by CI, e.g.
+#   ghcr.io/<owner>/undermine-api:sha-<commit>
+# Pass it per deploy: ansible-playbook ... -e api_image=...
+api_image: ""
+
+app_dir: /srv/undermine
+app_compose_dest: "{{ app_dir }}/docker-compose.yml"
+app_env_file: .env.production
+app_env_name: "{{ app_env_file }}"
+app_env_dest: "{{ app_dir }}/{{ app_env_name }}"
+
+# Files on the controller (real .env.production is git-ignored).
+# Per-host values come from the Vault bundle (hosts.<inventory_hostname>).
+app_compose_file: docker-compose.prod.yml
+app_compose_source: "{{ playbook_dir }}/../deploy/{{ app_compose_file }}"
+app_env_source: "{{ playbook_dir }}/../deploy/{{ app_env_file }}"
+
+app_project_name: undermine-prod
+app_owner: "{{ ansible_user }}"
+app_group: docker
+
+# Compose profiles required to start/stop this service (standby uses failover-only).
+app_compose_profiles: []
+app_profile_args: >-
+  {{ app_compose_profiles
+     | map('regex_replace', '^(.+)$', '--profile \1')
+     | join(' ') }}
+
+# prod-1: start the API. Standby/DR: pull and prepare the image, keep the API stopped.
+app_start: true
+app_stop_when_inactive: true
+# Used by the standby compose. Set true only when the node is activated for failover/DR.
+app_worker_enabled: false
+# prod-1: run migrations once before starting. Standby/DR: false.
+app_run_migrations: true
+
+app_health_url: "http://127.0.0.1:5000/health/ready"
+app_health_retries: 30
+app_health_delay: 2
+
+# Bind-mounted data directories. Docker would create missing ones as root.
+app_data_dirs:
+  - /srv/undermine/builds
+  - /srv/undermine/java
+
+# Optional GHCR credentials for a private package. Leave empty if the image is public
+# or the deploy user is already logged in on the host.
+ghcr_username: ""
+ghcr_token: ""

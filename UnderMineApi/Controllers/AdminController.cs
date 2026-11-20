@@ -2,13 +2,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Data;
 using UnderMineApi.DTOs;
 using UnderMineApi.Models;
 using UnderMineApi.Services;
 using UnderMineApi.Services.Interfaces;
-using UnderMineApi.Services.PasswordHasher;
+using UnderMineApi.Services.Security;
 using UnderMineApi.Extensions;
 
 namespace UnderMineApi.Controllers
@@ -17,6 +18,7 @@ namespace UnderMineApi.Controllers
     [ApiVersion("1.0")]
     [Route("api/v{version:apiVersion}/admin")]
     [Authorize(Roles = "admin")]
+    [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
     public class AdminController : ControllerBase
     {
 
@@ -25,21 +27,21 @@ namespace UnderMineApi.Controllers
         private readonly AppDbContext _context;
         private readonly IUserService _userService;
         private readonly IServerService _serverService;
-        private readonly IPasswordHasher _passwordHasher;
+        private readonly AdminAuditService _audit;
 
         public AdminController(ILogger<AdminController> logger,
                                ConfigCacheService cache,
                                AppDbContext context,
                                IUserService userService,
                                IServerService serverService,
-                               IPasswordHasher passwordHasher)
+                               AdminAuditService audit)
         {
             _logger = logger;
             _cache = cache;
             _context = context;
             _userService = userService;
             _serverService = serverService;
-            _passwordHasher = passwordHasher;
+            _audit = audit;
         }
 
         private string GetActor() => User?.Identity?.Name ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "system";
@@ -145,8 +147,14 @@ namespace UnderMineApi.Controllers
             var requestId = HttpContext.Items.ContainsKey("RequestId") ? HttpContext.Items["RequestId"]?.ToString() : null;
             using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
             {
-                if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
-                    return BadRequest(new { Error = "INVALID_PASSWORD_LENGTH" });
+                if (!PasswordPolicy.TryValidate(request.NewPassword, out var passwordError))
+                {
+                    return BadRequest(new
+                    {
+                        Error = "INVALID_PASSWORD",
+                        Message = passwordError
+                    });
+                }
 
                 var actor = GetActor();
 
@@ -281,6 +289,10 @@ namespace UnderMineApi.Controllers
 
                     await _context.SaveChangesAsync();
                     await _cache.RefreshCacheAsync();
+
+                    await _audit.LogAsync(
+                        GetActor(), "set_maintenance", "global_settings", null,
+                        enabled ? "enabled" : "disabled");
 
                     _logger.LogInformation("Admin {Actor} successfully set maintenance mode to {Enabled}", GetActor(), enabled);
 

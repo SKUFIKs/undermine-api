@@ -1,0 +1,19 @@
+---
+required_packages:
+  - curl
+  - git
+  - htop
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - rsync
+  - python3-apt
+
+new_group: api-deployers
+new_user: deploy
+# All servers run in UTC; local time is a presentation concern, not a server one.
+time_zone: UTC
+
+custom_ssh_port: 2222
+http_port: 80
+https_port: 443

@@ -1,0 +1,28 @@
+services:
+  api:
+    image: ${API_IMAGE}
+    container_name: undermine-api-prod
+    env_file:
+      - .env.production
+    network_mode: host
+    environment:
+      ASPNETCORE_URLS: http://127.0.0.1:5000
+      Kestrel__Endpoints__Http__Url: http://127.0.0.1:5000
+      ForwardedHeaders__KnownNetworks: 127.0.0.1/32
+      # Migrations are a separate one-shot step (docker run ... --migrate-only).
+      Database__MigrateOnStartup: "false"
+    volumes:
+      - /srv/undermine/builds:/app/builds
+      - /srv/undermine/java:/app/java
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5000/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

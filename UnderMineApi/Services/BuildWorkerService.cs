@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
+using UnderMineApi.Services.Interfaces;
 
 namespace UnderMineApi.Services
 {
@@ -23,15 +24,21 @@ namespace UnderMineApi.Services
 
         private readonly IServiceProvider _serviceProvider;
         private readonly IConfiguration _config;
+        private readonly IBuildLockService _buildLocks;
         private readonly ILogger<BuildWorkerService> _logger;
+
+        /// <summary>Throttles the periodic orphan-build scan while the queue is idle.</summary>
+        private DateTime _nextRecoveryUtc = DateTime.MinValue;
 
         public BuildWorkerService(
             IServiceProvider serviceProvider,
             IConfiguration config,
+            IBuildLockService buildLocks,
             ILogger<BuildWorkerService> logger)
         {
             _serviceProvider = serviceProvider;
             _config = config;
+            _buildLocks = buildLocks;
             _logger = logger;
         }
 
@@ -39,29 +46,27 @@ namespace UnderMineApi.Services
         {
             await RecoverInterruptedBuildsAsync(stoppingToken);
             await CleanupOrphanModpackStagingAsync(stoppingToken);
+            _nextRecoveryUtc = DateTime.UtcNow.AddSeconds(30);
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var engineDownloader = scope.ServiceProvider.GetRequiredService<EngineDownloadService>();
-                    var manifestService = scope.ServiceProvider.GetRequiredService<BuildManifestService>();
-                    var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
+                    var processed = await ProcessNextBuildAsync(stoppingToken);
 
-                    // Find next pending build (oldest first, so a failing build cannot starve the queue)
-                    var build = await context.BuildInstances
-                        .Where(b => b.Status == "pending")
-                        .OrderBy(b => b.Id)
-                        .FirstOrDefaultAsync(stoppingToken);
+                    if (!processed)
+                    {
+                        // A worker may have crashed while another replica stayed up. Re-scan
+                        // stuck builds periodically; the advisory lock tells us whether the
+                        // build is genuinely orphaned or still owned by a live worker.
+                        if (DateTime.UtcNow >= _nextRecoveryUtc)
+                        {
+                            await RecoverInterruptedBuildsAsync(stoppingToken);
+                            _nextRecoveryUtc = DateTime.UtcNow.AddSeconds(30);
+                        }
 
-                    if (build != null)
-                    {
-                        await ProcessBuildAsync(context, build, engineDownloader, manifestService, scopeFactory, stoppingToken);
-                    }
-                    else
-                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         await ScheduleRetryAsync(context, stoppingToken);
                     }
                 }
@@ -86,10 +91,64 @@ namespace UnderMineApi.Services
         }
 
         /// <summary>
-        /// Re-queues builds that were left in an intermediate state ("downloading"/"hashing")
-        /// by a crash or hard restart. Without this they would stay stuck forever because the
-        /// queue only picks up "pending" builds. Re-running is safe: downloads skip files that
-        /// already exist and partial downloads are written to "*.part".
+        /// Claims one pending build through the cross-process advisory lock and processes it.
+        /// Returns false when nothing could be claimed (empty queue, or every pending build is
+        /// owned by another replica).
+        /// </summary>
+        private async Task<bool> ProcessNextBuildAsync(CancellationToken ct)
+        {
+            var pendingIds = await GetPendingBuildIdsAsync(ct);
+
+            foreach (var buildId in pendingIds)
+            {
+                await using var buildLock = await _buildLocks.TryAcquireAsync(buildId, ct);
+                if (buildLock == null)
+                {
+                    _logger.LogDebug("Build {BuildId} is owned by another worker; skipping", buildId);
+                    continue;
+                }
+
+                using var scope = _serviceProvider.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Re-read under the lock: the queue snapshot may be stale by the time the lock
+                // is acquired.
+                var build = await context.BuildInstances
+                    .FirstOrDefaultAsync(b => b.Id == buildId && b.Status == "pending", ct);
+
+                if (build == null)
+                    continue;
+
+                var engineDownloader = scope.ServiceProvider.GetRequiredService<EngineDownloadService>();
+                var manifestService = scope.ServiceProvider.GetRequiredService<BuildManifestService>();
+                var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
+
+                await ProcessBuildAsync(context, build, engineDownloader, manifestService, scopeFactory, ct);
+                return true;
+            }
+
+            return false;
+        }
+
+        private async Task<List<long>> GetPendingBuildIdsAsync(CancellationToken ct)
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            return await context.BuildInstances
+                .AsNoTracking()
+                .Where(b => b.Status == "pending")
+                .OrderBy(b => b.Id)
+                .Take(50)
+                .Select(b => b.Id)
+                .ToListAsync(ct);
+        }
+
+        /// <summary>
+        /// Re-queues builds left in "downloading"/"hashing" by a crash. A build is reset only when
+        /// its advisory lock can be acquired: if another live replica still holds the lock, the
+        /// build is being processed there and must not be touched. Re-running is safe: downloads
+        /// skip existing files and partial downloads are written to "*.part".
         /// </summary>
         private async Task RecoverInterruptedBuildsAsync(CancellationToken ct)
         {
@@ -98,23 +157,40 @@ namespace UnderMineApi.Services
                 using var scope = _serviceProvider.CreateScope();
                 var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                var interrupted = await context.BuildInstances
+                var interruptedIds = await context.BuildInstances
+                    .AsNoTracking()
                     .Where(b => b.Status == "downloading" || b.Status == "hashing")
                     .OrderBy(b => b.Id)
+                    .Select(b => b.Id)
                     .ToListAsync(ct);
 
-                if (interrupted.Count == 0) return;
-
-                foreach (var build in interrupted)
+                foreach (var buildId in interruptedIds)
                 {
+                    await using var buildLock = await _buildLocks.TryAcquireAsync(buildId, ct);
+                    if (buildLock == null)
+                    {
+                        _logger.LogDebug(
+                            "Build {BuildId} is still owned by another worker; leaving it in progress",
+                            buildId);
+                        continue;
+                    }
+
+                    var build = await context.BuildInstances
+                        .FirstOrDefaultAsync(b =>
+                            b.Id == buildId &&
+                            (b.Status == "downloading" || b.Status == "hashing"), ct);
+
+                    if (build == null)
+                        continue;
+
                     _logger.LogWarning(
                         "Build {BuildId} was interrupted in state {Status}, re-queued as pending",
-                        build.BuildId, build.Status);
+                        build.Id, build.Status);
+
                     build.Status = "pending";
                     build.UpdatedAt = DateTime.UtcNow;
+                    await context.SaveChangesAsync(ct);
                 }
-
-                await context.SaveChangesAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

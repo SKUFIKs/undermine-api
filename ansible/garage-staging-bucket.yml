@@ -1,0 +1,49 @@
+---
+# Create the staging Garage bucket and grant the existing API key access.
+# Safe to re-run; it does not change the Garage layout or node configuration.
+#
+#   ansible-playbook -i inventory.ini garage-staging-bucket.yml
+- name: Load variables from HashiCorp Vault
+  hosts: garage
+  gather_facts: false
+  connection: local
+  tags: [always]
+  roles:
+    - vault_secrets
+
+- name: Create the staging Garage bucket
+  hosts: garage
+  become: true
+  gather_facts: false
+  vars:
+    ansible_remote_tmp: /tmp
+
+  tasks:
+    - name: Read the Garage API key id
+      ansible.builtin.shell: >-
+        awk -F= '/^S3__AccessKey=/ { print $2 }' {{ garage_api_key_file }}
+      register: garage_api_key_file_value
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Require the Garage API key id
+      ansible.builtin.assert:
+        that:
+          - garage_api_key_file_value.stdout | trim | length > 0
+        fail_msg: >-
+          Missing S3__AccessKey in {{ garage_api_key_file }}.
+          Run garage-bootstrap.yml first.
+      run_once: true
+
+    - name: Set the Garage API key id
+      ansible.builtin.set_fact:
+        garage_api_key_id: "{{ garage_api_key_file_value.stdout | trim }}"
+      run_once: true
+
+    - name: Ensure the staging Garage bucket
+      ansible.builtin.include_role:
+        name: garage
+        tasks_from: bucket.yml
+      vars:
+        garage_bucket_name: "{{ garage_staging_bucket }}"

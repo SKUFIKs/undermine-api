@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
+using UnderMineApi.Extensions;
 using UnderMineApi.Services;
 
 namespace UnderMineApi.Controllers;
@@ -11,6 +13,7 @@ namespace UnderMineApi.Controllers;
 [ApiController]
 [Route("api/v1.0/admin")]
 [Authorize(Roles = "admin")]
+[EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminModsController : ControllerBase
 {
     private readonly AppDbContext _context;

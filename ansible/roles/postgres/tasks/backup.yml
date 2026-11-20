@@ -1,0 +1,150 @@
+---
+- name: Install pgBackRest and cron on Primary and DR
+  ansible.builtin.apt:
+    name:
+      - pgbackrest
+      - cron
+    state: present
+    update_cache: true
+  when: inventory_hostname in ['prod-1-se', 'prod-3-rf']
+
+- name: Generate SSH key for postgres user (Bi-directional)
+  become: true
+  become_user: postgres
+  ansible.builtin.user:
+    name: postgres
+    generate_ssh_key: true
+    ssh_key_type: rsa
+    ssh_key_bits: 4096
+  when: inventory_hostname in ['prod-1-se', 'prod-3-rf']
+
+- name: Fetch postgres public keys
+  ansible.builtin.slurp:
+    src: /var/lib/postgresql/.ssh/id_rsa.pub
+  register: pg_pubkey
+  when: inventory_hostname in ['prod-1-se', 'prod-3-rf']
+
+- name: Add Primary SSH key to DR authorized_keys
+  become: true
+  become_user: postgres
+  ansible.posix.authorized_key:
+    user: postgres
+    state: present
+    key: "{{ hostvars['prod-1-se']['pg_pubkey']['content'] | b64decode | trim }}"
+  when:
+    - inventory_hostname == 'prod-3-rf'
+    - hostvars['prod-1-se']['pg_pubkey'] is defined
+
+- name: Add DR SSH key to Primary authorized_keys
+  become: true
+  become_user: postgres
+  ansible.posix.authorized_key:
+    user: postgres
+    state: present
+    key: "{{ hostvars['prod-3-rf']['pg_pubkey']['content'] | b64decode | trim }}"
+  when:
+    - inventory_hostname == 'prod-1-se'
+    - hostvars['prod-3-rf']['pg_pubkey'] is defined
+
+- name: Create backup directory on DR
+  ansible.builtin.file:
+    path: /srv/undermine/backups
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  when: inventory_hostname == 'prod-3-rf'
+
+- name: Configure SSH options for pgBackRest on Primary
+  ansible.builtin.blockinfile:
+    path: /var/lib/postgresql/.ssh/config
+    create: true
+    owner: postgres
+    group: postgres
+    mode: '0600'
+    marker: "# {mark} PGBACKREST REPO HOST"
+    block: |
+      Host {{ pgbackrest_repo_host | default(hostvars['prod-3-rf'].ansible_host) }}
+          Port {{ hostvars['prod-3-rf'].ansible_port | default(22) }}
+          BatchMode yes
+          StrictHostKeyChecking accept-new
+  when: inventory_hostname == 'prod-1-se'
+
+- name: Configure SSH options for pgBackRest on DR
+  ansible.builtin.blockinfile:
+    path: /var/lib/postgresql/.ssh/config
+    create: true
+    owner: postgres
+    group: postgres
+    mode: '0600'
+    marker: "# {mark} PGBACKREST PRIMARY HOST"
+    block: |
+      Host {{ hostvars['prod-1-se'].ansible_host }}
+          Port {{ hostvars['prod-1-se'].ansible_port | default(22) }}
+          BatchMode yes
+          StrictHostKeyChecking accept-new
+  when: inventory_hostname == 'prod-3-rf'
+
+- name: Configure pgBackRest on Primary
+  ansible.builtin.blockinfile:
+    path: /etc/pgbackrest/pgbackrest.conf
+    create: true
+    owner: postgres
+    group: postgres
+    mode: '0640'
+    marker: "# {mark} ANSIBLE MANAGED PGBACKREST PRIMARY"
+    block: |
+      [global]
+      repo1-host={{ pgbackrest_repo_host | default(hostvars['prod-3-rf'].ansible_host) }}
+      repo1-host-user=postgres
+      repo1-host-port={{ hostvars['prod-3-rf'].ansible_port | default(22) }}
+      log-level-console=info
+      log-level-file=detail
+
+      [undermine]
+      pg1-path={{ pg_new_data }}
+  when: inventory_hostname == 'prod-1-se'
+
+- name: Configure pgBackRest on DR
+  ansible.builtin.blockinfile:
+    path: /etc/pgbackrest/pgbackrest.conf
+    create: true
+    owner: postgres
+    group: postgres
+    mode: '0640'
+    marker: "# {mark} ANSIBLE MANAGED PGBACKREST DR"
+    block: |
+      [global]
+      repo1-path=/srv/undermine/backups
+      repo1-retention-full=2
+      repo1-retention-diff=14
+      log-level-console=info
+      log-level-file=detail
+
+      [undermine]
+      pg1-host={{ hostvars['prod-1-se'].ansible_host }}
+      pg1-host-user=postgres
+      pg1-host-port={{ hostvars['prod-1-se'].ansible_port | default(22) }}
+      pg1-path={{ pg_new_data }}
+  when: inventory_hostname == 'prod-3-rf'
+
+- name: Add cron jobs for Backups on DR
+  become: true
+  become_user: postgres
+  ansible.builtin.cron:
+    name: "{{ item.name }}"
+    minute: "{{ item.minute }}"
+    hour: "{{ item.hour }}"
+    weekday: "{{ item.weekday | default('*') }}"
+    job: "{{ item.job }}"
+  loop:
+    - name: "pgBackRest Diff Backup"
+      minute: "0"
+      hour: "2"
+      job: "pgbackrest --type=diff --stanza=undermine backup"
+    - name: "pgBackRest Full Backup"
+      minute: "0"
+      hour: "1"
+      weekday: "0"
+      job: "pgbackrest --type=full --stanza=undermine backup"
+  when: inventory_hostname == 'prod-3-rf'

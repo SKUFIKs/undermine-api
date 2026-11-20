@@ -96,8 +96,9 @@ namespace UnderMineApi.Services
             var files = await ScanAndHashDirectoryAsync(buildDir, build.BuildId, progress, ct);
 
             // 2. Upload to S3 with deduplication
-            // The bucket may not exist yet on a fresh environment - creating it here also
-            // applies the public-read policy required by the launcher.
+            // With S3:ManageBucket=true (MinIO/dev) this creates the bucket and applies the
+            // public-read policy. Garage runs with false: ansible/garage-bootstrap.yml already
+            // created the bucket, key and website, so this is a no-op.
             await _s3Storage.EnsureBucketAsync(ct);
 
             var baseUrl = _config["S3:CdnBaseUrl"]?.TrimEnd('/') ?? "";
@@ -289,7 +290,7 @@ namespace UnderMineApi.Services
             return results.ToList();
         }
 
-        private string ClassifyFile(string relativePath)
+        public static string ClassifyFile(string relativePath)
         {
             var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (segments.Length == 0) return "FORCE_SYNC";

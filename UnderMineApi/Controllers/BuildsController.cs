@@ -5,34 +5,43 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
+using UnderMineApi.Extensions;
 using UnderMineApi.Services;
 
 namespace UnderMineApi.Controllers
 {
     [ApiController]
     [Route("api/v1.0/builds")]
+    [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
     public class BuildsController : ControllerBase
     {
         private readonly AppDbContext _context;
         private readonly ILogger<BuildsController> _logger;
         private readonly IConfiguration _config;
         private readonly S3StorageService _s3Storage;
+        private readonly AdminAuditService _audit;
+        private readonly VersionCatalogService _versions;
 
         public BuildsController(
             AppDbContext context,
             ILogger<BuildsController> logger,
             IConfiguration config,
-            S3StorageService s3Storage)
+            S3StorageService s3Storage,
+            AdminAuditService audit,
+            VersionCatalogService versions)
         {
             _context = context;
             _logger = logger;
             _config = config;
             _s3Storage = s3Storage;
+            _audit = audit;
+            _versions = versions;
         }
 
         /// <summary>
@@ -48,6 +57,35 @@ namespace UnderMineApi.Controllers
 
             _logger.LogInformation("Admin {Actor} creating build: {Name} ({McVersion}, {Loader})",
                 actor, request.Name, request.McVersion, request.Loader);
+
+            // Best-effort validation against the live version catalog. If the upstream metadata
+            // is temporarily unavailable we keep the old behaviour (accept the request) instead
+            // of blocking build creation.
+            try
+            {
+                var catalog = await _versions.GetMinecraftVersionsAsync(
+                    request.Loader, includePrerelease: true, ct);
+
+                if (!catalog.Versions.Any(v =>
+                        string.Equals(v.Version, request.McVersion.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    return BadRequest(new
+                    {
+                        Error = "UNKNOWN_MC_VERSION",
+                        Message = $"Minecraft version '{request.McVersion}' is not offered by loader '{request.Loader}'."
+                    });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Could not validate Minecraft version {Version} for loader {Loader}; continuing",
+                    request.McVersion, request.Loader);
+            }
 
             var build = new BuildInstance
             {
@@ -65,6 +103,10 @@ namespace UnderMineApi.Controllers
 
             _logger.LogInformation("Build {BuildId} created and queued", build.BuildId);
 
+            await _audit.LogAsync(
+                actor, "create_build", "build", build.Id,
+                $"{build.Name} ({build.McVersion}, {build.LoaderType})", ct);
+
             return Ok(new BuildResponse
             {
                 Id = build.Id,
@@ -80,16 +122,69 @@ namespace UnderMineApi.Controllers
             });
         }
 
+        private static readonly string[] KnownStatuses =
+            { "pending", "downloading", "hashing", "completed", "failed" };
+
         /// <summary>
-        /// Lists all builds.
+        /// Lists builds with pagination, optional status filter and name search.
+        /// GET /builds?page=1&amp;pageSize=20&amp;status=failed&amp;query=tech
         /// </summary>
         [HttpGet]
         [Authorize(Roles = "admin")]
-        public async Task<ActionResult<List<BuildResponse>>> ListBuilds(CancellationToken ct)
+        public async Task<ActionResult<PagedResponse<BuildResponse>>> ListBuilds(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20,
+            [FromQuery] string? status = null,
+            [FromQuery] string? query = null,
+            CancellationToken ct = default)
         {
-            var builds = await _context.BuildInstances
-                .AsNoTracking()
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.Trim().ToLowerInvariant();
+                if (!KnownStatuses.Contains(status))
+                {
+                    return BadRequest(new
+                    {
+                        Error = "INVALID_STATUS",
+                        Message = $"Unknown build status '{status}'. Use one of: {string.Join(", ", KnownStatuses)}."
+                    });
+                }
+            }
+            else
+            {
+                status = null;
+            }
+
+            var buildsQuery = _context.BuildInstances.AsNoTracking();
+
+            if (status != null)
+                buildsQuery = buildsQuery.Where(b => b.Status == status);
+
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                var term = query.Trim();
+                if (term.Length > 100)
+                    term = term[..100];
+
+                buildsQuery = buildsQuery.Where(b => EF.Functions.ILike(b.Name, $"%{term}%"));
+            }
+
+            var totalCount = await buildsQuery.CountAsync(ct);
+            var totalPages = totalCount == 0
+                ? 0
+                : (int)Math.Ceiling(totalCount / (double)pageSize);
+
+            if (totalPages > 0 && page > totalPages)
+                page = totalPages;
+
+            var builds = await buildsQuery
                 .OrderByDescending(b => b.CreatedAt)
+                .ThenByDescending(b => b.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(b => new BuildResponse
                 {
                     Id = b.Id,
@@ -117,7 +212,14 @@ namespace UnderMineApi.Controllers
                 })
                 .ToListAsync(ct);
 
-            return Ok(builds);
+            return Ok(new PagedResponse<BuildResponse>
+            {
+                Items = builds,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize,
+                TotalPages = totalPages
+            });
         }
 
         /// <summary>
@@ -261,19 +363,8 @@ namespace UnderMineApi.Controllers
             _context.BuildInstances.Remove(entity);
             await _context.SaveChangesAsync(ct);
 
-            // The build rows (and their files / logs through the cascade) are gone: rewind the
-            // identity sequences so the next build reuses the freed id instead of continuing
-            // from the high-water mark. Housekeeping only - never fail the delete over it.
-            try
-            {
-                await _context.RewindAsync(IdentitySequence.Builds, ct);
-                await _context.RewindAsync(IdentitySequence.BuildFiles, ct);
-                await _context.RewindAsync(IdentitySequence.BuildLogs, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not rewind identity sequences after deleting build {Id}", id);
-            }
+            // IDs are never reused: deleted build ids stay retired so audit entries, logs and
+            // external references cannot point at a different build later.
 
             // Local files: best effort - the worker may still hold them if it just crashed.
             try
@@ -299,10 +390,12 @@ namespace UnderMineApi.Controllers
                 _logger.LogWarning(ex, "Could not delete staged modpack for build {BuildId}", build.BuildId);
             }
 
-            // Uploaded objects: best effort, they are only referenced by this build.
+            // Uploaded objects: best effort, they are only referenced by this build. Delete the
+            // whole prefix (not just build_files keys) so empty directory markers created by the
+            // admin file editor are removed as well.
             try
             {
-                await _s3Storage.DeleteObjectsAsync(s3Keys, ct);
+                await _s3Storage.DeletePrefixAsync($"builds/{build.BuildId}/", ct);
             }
             catch (OperationCanceledException)
             {
@@ -310,10 +403,12 @@ namespace UnderMineApi.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not delete S3 objects for build {BuildId}", build.BuildId);
+                _logger.LogWarning(ex, "Could not delete S3 prefix for build {BuildId}", build.BuildId);
             }
 
             _logger.LogInformation("Build {BuildId} deleted by {Actor} ({FileCount} files)", build.BuildId, actor, s3Keys.Count);
+
+            await _audit.LogAsync(actor, "delete_build", "build", id, build.BuildId, ct);
 
             return Ok(new { Message = "Build deleted", FileCount = s3Keys.Count });
         }
@@ -323,6 +418,7 @@ namespace UnderMineApi.Controllers
         /// </summary>
         [HttpGet("{buildId}/manifest")]
         [AllowAnonymous]
+        [EnableRateLimiting(RateLimitingExtensions.ApiPolicy)]
         public async Task<ActionResult<ClientManifestResponse>> GetClientManifest(string buildId, CancellationToken ct)
         {
             var build = await _context.BuildInstances

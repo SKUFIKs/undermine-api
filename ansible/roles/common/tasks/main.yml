@@ -1,0 +1,161 @@
+---
+- name: Ensure a deploy SSH public key is provided
+  ansible.builtin.assert:
+    that:
+      - deploy_ssh_public_key is defined
+      - deploy_ssh_public_key | length > 20
+      - deploy_ssh_public_key.startswith('ssh-') or deploy_ssh_public_key.startswith('ecdsa-')
+    fail_msg: >-
+      deploy_ssh_public_key is missing in group_vars/all/main.yml.
+      SSH hardening disables password login, so without a key the server
+      becomes unreachable. Refusing to continue.
+
+- name: Installing packages
+  ansible.builtin.apt:
+    name: "{{ required_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure server timezone
+  community.general.timezone:
+    name: "{{ time_zone }}"
+
+- name: Add deploy group
+  ansible.builtin.group:
+    name: "{{ new_group }}"
+    state: present
+
+- name: Add deploy user
+  ansible.builtin.user:
+    name: "{{ new_user }}"
+    groups:
+      - "{{ new_group }}"
+      - sudo
+    append: true
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Allow deploy user to run sudo without a password
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-undermine-deploy
+    content: |
+      %{{ new_group }} ALL=(ALL) NOPASSWD:ALL
+    mode: '0440'
+    owner: root
+    group: root
+    validate: visudo -cf %s
+
+- name: Install SSH key for the deploy user
+  ansible.posix.authorized_key:
+    user: "{{ new_user }}"
+    key: "{{ deploy_ssh_public_key }}"
+    state: present
+
+- name: Install SSH key for the current bootstrap user
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    key: "{{ deploy_ssh_public_key }}"
+    state: present
+  when: ansible_user is defined and ansible_user != new_user
+
+- name: Allow custom SSH port in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ custom_ssh_port }}"
+    proto: tcp
+
+- name: Allow HTTP in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ http_port }}"
+    proto: tcp
+
+- name: Allow HTTPS in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ https_port }}"
+    proto: tcp
+
+- name: Enable UFW with default deny incoming
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Remove the old SSH hardening drop-in
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/00-undermine-hardening.conf
+    state: absent
+  notify: Restart sshd
+
+- name: Harden SSH
+  ansible.builtin.copy:
+    # sshd keeps the FIRST value it reads, and files in sshd_config.d are
+    # included alphabetically. The provider ships 00password.conf with
+    # PermitRootLogin/PasswordAuthentication yes, so our file must sort first.
+    dest: /etc/ssh/sshd_config.d/000-undermine-hardening.conf
+    content: |
+      Port {{ custom_ssh_port }}
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      AllowAgentForwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+    mode: '0644'
+    owner: root
+    group: root
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Configure Fail2Ban for the SSH port
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      backend = systemd
+      bantime = 3600
+      findtime = 600
+      maxretry = 3
+
+      [sshd]
+      enabled = true
+      port = {{ custom_ssh_port }}
+      filter = sshd
+    mode: '0644'
+    owner: root
+    group: root
+  notify: Restart fail2ban
+
+- name: Enable and start Fail2Ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: Enable automatic upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Apply custom unattended-upgrades settings
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99custom-unattended-upgrades
+    content: |
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+    mode: '0644'
+    owner: root
+    group: root

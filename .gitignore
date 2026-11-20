@@ -66,6 +66,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+**/.env.production
+**/.env.staging
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
@@ -296,7 +299,6 @@ node_modules/
 
 # Visual Studio 6 auto-generated workspace file (contains which files were open etc.)
 *.vbw
-
 # Visual Studio LightSwitch build output
 **/*.HTMLClient/GeneratedArtifacts
 **/*.DesktopClient/GeneratedArtifacts
@@ -369,3 +371,50 @@ FodyWeavers.xsd
 .env
 .env.local
 .env.*.local
+
+# TLS certificates (nginx TLS profile)
+certs/
+nginx.tls.conf
+
+# Local offline image archive (do not commit)
+minio_image.tar
+
+# Local build workspace (Build:RootPath, e.g. when running with dotnet run)
+builds/
+
+# Local Java runtime cache (JavaRuntime:RootPath)
+java/
+
+# Ansible: real inventory, real site values and secrets must stay out of the public repo.
+# Copy the matching *.example file once, then fill in real values.
+ansible/inventory.ini
+ansible/group_vars/all/main.yml
+ansible/group_vars/all/vault.yml
+ansible/**/host_vars/*.yml
+ansible/**/host_vars/**/*.yml
+ansible/*.vault_pass
+ansible/vault_pass.txt
+ansible/.vault_pass
+
+# Ansible secrets, vaults and local artifacts.
+# Any group/role vault or private key must stay out of the public repo.
+ansible/**/vault.yml
+ansible/vault.legacy.yml
+ansible/vault.legacy.yaml
+ansible/vault.config.json
+ansible/vault.config.full.json
+ansible/vault.tokens.json
+ansible/vault.database.json
+ansible/app_env_vars.json
+ansible/**/*vault*pass*
+ansible/**/*.key
+ansible/**/*.pem
+ansible/**/*.p12
+ansible/**/*.crt
+ansible/**/.ansible/
+ansible/**/*.retry
+
+# Deploy environment files with real values (templates are *.example).
+deploy/.env.local
+deploy/.env.development
+deploy/.env.test

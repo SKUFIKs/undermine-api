@@ -43,6 +43,7 @@ namespace UnderMineApi.Services
     new Claim("UserId", user.Id.ToString()),
     new Claim(ClaimTypes.Name, user.Username), 
     new Claim(ClaimTypes.Role, user.Role ?? "user"),
+    new Claim("token_version", user.TokenVersion.ToString()),
     new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
 };
 

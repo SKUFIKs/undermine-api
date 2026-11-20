@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using UnderMineApi.Data;
+using UnderMineApi.DTOs;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Interfaces;
 
 namespace UnderMineApi.Controllers
 {
@@ -12,17 +14,20 @@ namespace UnderMineApi.Controllers
     [ApiController]
     [Route("api/v1.0")]
     [Authorize]
-    public class UserController : Controller
+    public class UserController : ControllerBase
     {
         private readonly AppDbContext _context;
         private readonly ILogger<UserController> _logger;
-        private readonly ConfigCacheService _cache;
+        private readonly IUserService _userService;
 
-        public UserController(AppDbContext context, ILogger<UserController> logger, ConfigCacheService cache)
+        public UserController(
+            AppDbContext context,
+            ILogger<UserController> logger,
+            IUserService userService)
         {
             _context = context;
             _logger = logger;
-            _cache = cache;
+            _userService = userService;
         }
 
         private string? GetUsername() => User.FindFirstValue(ClaimTypes.Name);
@@ -54,19 +59,8 @@ namespace UnderMineApi.Controllers
                         return NotFound(new { Error = "USER_NOT_FOUND" });
                     }
 
-                    var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    var activeBan = await _context.UserBans.AnyAsync(b =>
-                        b.UserId == dbUser.Id &&
-                        b.IsActive &&
-                        (b.ExpiresAt == null || b.ExpiresAt > currentTime)
-                    );
-
-                    if (activeBan)
-                    {
-                        _logger.LogWarning("GetUserData blocked: user {Username} (ID: {UserId}) is banned", username, dbUser.Id);
-                        return StatusCode(403, new { Error = "ACCOUNT_BANNED" });
-                    }
-
+                    // Bans are enforced earlier by AccountBanMiddleware, so a banned account can
+                    // never reach this action.
                     var response = new
                     {
                         dbUser.Username,
@@ -113,19 +107,8 @@ namespace UnderMineApi.Controllers
                         return NotFound(new { Error = "USER_NOT_FOUND" });
                     }
 
-                    var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    var activeBan = await _context.UserBans.AnyAsync(b =>
-                        b.UserId == dbUser.Id &&
-                        b.IsActive &&
-                        (b.ExpiresAt == null || b.ExpiresAt > currentTime)
-                    );
-
-                    if (activeBan)
-                    {
-                        _logger.LogWarning("GetUserStatistics blocked: user {Username} (ID: {UserId}) is banned", username, dbUser.Id);
-                        return StatusCode(403, new { Error = "ACCOUNT_BANNED" });
-                    }
-
+                    // Bans are enforced earlier by AccountBanMiddleware, so a banned account can
+                    // never reach this action.
                     var response = new
                     {
                         dbUser.RealName,
@@ -148,6 +131,74 @@ namespace UnderMineApi.Controllers
                     _logger.LogError(ex, "Error retrieving user statistics for {Username}: {ErrorMessage}", GetUsername(), ex.Message);
                     return StatusCode(500, new { Error = "INTERNAL_ERROR" });
                 }
+            }
+        }
+
+        [HttpPatch("user/password")]
+        public async Task<IActionResult> ChangePassword(
+            [FromBody] ChangePasswordRequestDto request,
+            CancellationToken cancellationToken)
+        {
+            var requestId = HttpContext.Items.ContainsKey("RequestId") ? HttpContext.Items["RequestId"]?.ToString() : null;
+            using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new
+                    {
+                        status = 400,
+                        error = "INVALID_REQUEST",
+                        message = "Current and new password are required."
+                    });
+                }
+
+                var userIdValue = User.FindFirst("UserId")?.Value;
+                if (!long.TryParse(userIdValue, out var userId))
+                {
+                    return Unauthorized(new
+                    {
+                        status = 401,
+                        error = "INVALID_TOKEN",
+                        message = "Token does not contain a user id."
+                    });
+                }
+
+                var result = await _userService.ChangeOwnPasswordAsync(
+                    userId, request.CurrentPassword, request.NewPassword, cancellationToken);
+
+                if (!result.Success)
+                {
+                    _logger.LogWarning(
+                        "Password change failed for user {UserId}: {Error}", userId, result.Error);
+
+                    return result.Error switch
+                    {
+                        "USER_NOT_FOUND" => NotFound(new { error = result.Error, message = result.Message }),
+                        "INVALID_CURRENT_PASSWORD" => Unauthorized(new
+                        {
+                            status = 401,
+                            error = result.Error,
+                            message = result.Message
+                        }),
+                        "WEAK_PASSWORD" or "SAME_PASSWORD" => BadRequest(new
+                        {
+                            status = 400,
+                            error = result.Error,
+                            message = result.Message
+                        }),
+                        _ => StatusCode(500, new { error = "INTERNAL_ERROR" })
+                    };
+                }
+
+                _logger.LogInformation("Password changed for user {UserId}", userId);
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Password changed successfully.",
+                    token = result.Token,
+                    expiresIn = result.ExpiresIn
+                });
             }
         }
 

@@ -33,6 +33,7 @@
 - [Безопасность](#безопасность)
 - [Миграции](#миграции)
 - [Docker](#docker)
+- [CI/CD](#cicd)
 - [Разработка](#разработка)
 - [Известные ограничения](#известные-ограничения)
 
@@ -42,7 +43,7 @@
 
 ### Аккаунты и аутентификация
 
-- Регистрация игровых аккаунтов с лимитами (2 аккаунта на устройство, 4 на IP).
+- Регистрация игровых аккаунтов с настраиваемыми лимитами на устройство и подсеть (по умолчанию 2 и 4).
 - Вход с выдачей **JWT** (HS256, срок 30 дней) и проверкой бана перед выдачей токена.
 - Пароли хранятся только в виде **BCrypt**-хешей.
 - Роли `admin` / `user`. Роль попадает в токен и проверяется на админ-эндпоинтах.
@@ -157,20 +158,32 @@ docker compose up -d --build
 
 Открытые порты:
 
-| Сервис | Порт | Назначение |
-|---|---|---|
-| API | `5000` | REST API и админ-панель |
-| nginx (CDN) | `8080` | Раздача файлов сборок |
-| MinIO API | `9000` | S3-совместимое хранилище |
-| MinIO Console | `9001` | Веб-консоль MinIO |
-| PostgreSQL | `5432` | База данных |
+| Сервис | Порт | Доступ | Назначение |
+|---|---|---|---|
+| nginx (CDN + API) | `8080` | публичный | REST API, админ-панель, файлы сборок |
+| API | `5000` | только `127.0.0.1` | прямой доступ для отладки |
+| MinIO API | `9000` | только `127.0.0.1` | S3-совместимое хранилище |
+| MinIO Console | `9001` | только `127.0.0.1` | Веб-консоль MinIO |
+| PostgreSQL | `5432` | только `127.0.0.1` | База данных |
 
 Проверка:
 
 ```bash
-curl http://localhost:5000/health     # Healthy
-curl http://localhost:8080/health     # OK  (nginx)
+curl http://localhost:8080/health          # OK  (nginx)
+curl http://localhost:5000/health/ready    # Healthy (API + PostgreSQL, только с хоста)
+curl http://localhost:5000/health          # Healthy (API + PostgreSQL + MinIO)
+curl http://localhost:8080/api/v1.0/servers   # API через nginx (нужен Bearer-токен)
 ```
+
+> **Прокси и IP-адреса клиентов.** Наружу смотрит только nginx. Он добавляет
+> `X-Forwarded-For`/`X-Forwarded-Proto`, а API доверяет этим заголовкам **только** из подсети
+> `PROXY_SUBNET` (по умолчанию `172.28.0.0/24`, сеть `frontend` в compose). Поэтому подделать
+> IP через заголовок нельзя, и лимиты регистрации/рейт-лимит считаются по реальному адресу.
+> Если подсеть занята на хосте — поменяйте `PROXY_SUBNET` в `.env`.
+>
+> Для bare-metal запуска без nginx оставьте `ForwardedHeaders__KnownNetworks` и
+> `ForwardedHeaders__KnownProxies` пустыми — тогда используются безопасные значения по
+> умолчанию (только loopback).
 
 > **Важно про `POSTGRES_HOST`.** Внутри docker-compose сервис БД доступен по DNS-имени
 > `postgres`, а не `localhost` (внутри контейнера `localhost` — это сам контейнер).
@@ -189,6 +202,9 @@ dotnet build
 dotnet run --project UnderMineApi/UnderMineApi.csproj
 ```
 
+В Development доступен Swagger UI: `http://localhost:5000/swagger` (в Production он не
+подключается).
+
 При первом старте приложение само применит миграции (`Database.Migrate()`), создаст
 таблицы и заведёт админ-аккаунт (см. следующий раздел).
 
@@ -201,8 +217,8 @@ dotnet run --project UnderMineApi/UnderMineApi.csproj
 
 ```
 ======================== DEFAULT ADMIN CREATED ========================
- Login:    admin_1c035dea
- Password: PAgQf_Jr+vDrxhwSaH6pex+*
+ Login:    admin_<8 hex>
+ Password: <generated-password>
  Sign in to the admin panel with these credentials. They are shown only
  once - store them now. Lost? set BootstrapAdminUsername and
  BootstrapAdminPassword in .env and restart to reset the account.
@@ -217,7 +233,8 @@ docker compose logs api
 docker logs undermine-api-api-1
 ```
 
-Дальше — `http://localhost:5000/admin/` и вход этими кредыми.
+Дальше — `http://localhost:8080/admin/` (публичный вход через nginx) или
+`http://localhost:5000/admin/` (напрямую с хоста) и вход этими кредыми.
 
 ### Поведение
 
@@ -225,7 +242,7 @@ docker logs undermine-api-api-1
 |---|---|
 | Админов в базе нет | Создаётся `admin_<8 hex>` со случайным паролем из 24 символов; креды печатаются в лог |
 | Админ уже есть | Ничего не создаётся, в лог: `Admin account already exists, skipping bootstrap` |
-| Заданы `BootstrapAdminUsername` **и** `BootstrapAdminPassword` | Создаётся этот аккаунт; если он уже есть — его пароль и роль **перезаписываются** |
+| Заданы `BootstrapAdminUsername` **и** `BootstrapAdminPassword` | Создаётся этот аккаунт; если он уже есть — его пароль и роль **перезаписываются**. Пароль должен быть 8–72 байта |
 | Задан только один из двух параметров | Предупреждение в лог, работает случайная генерация |
 | `BootstrapAdminEnabled=false` | Ничего не делается |
 
@@ -239,8 +256,8 @@ docker logs undermine-api-api-1
 пересоздастся:
 
 ```env
-BootstrapAdminUsername=admin_1c035dea
-BootstrapAdminPassword=новый-пароль
+BootstrapAdminUsername=admin_1a2b3c4d
+BootstrapAdminPassword=CHANGE_ME_MIN_8_CHARS
 ```
 
 > Случайный режим никогда не трогает уже существующие аккаунты: сервис срабатывает
@@ -267,6 +284,8 @@ BootstrapAdminPassword=новый-пароль
 | `POSTGRES_PORT` | — | Порт БД | — |
 | `POSTGRES_DB` | — | Имя базы | — |
 | `POSTGRES_USER` | — | Пользователь | — |
+| `Database__MigrateRetries` | `Database:MigrateRetries` | Попыток применить миграции при старте | `10` |
+| `Database__MigrateRetryDelaySeconds` | `Database:MigrateRetryDelaySeconds` | Пауза между попытками (сек) | `2` |
 | `POSTGRES_PASSWORD` | — | Пароль | — |
 | — | `ConnectionStrings__PostgreConnection` | Строка подключения (собирается из перечисленных) | — |
 
@@ -287,7 +306,7 @@ BootstrapAdminPassword=новый-пароль
 | `S3__SecretKey` | Секрет доступа | `minioadmin` |
 | `S3__Bucket` | Имя бакета | `minecraft-builds` |
 | `S3__UseSsl` | Использовать HTTPS к хранилищу | `false` |
-| `S3__CdnBaseUrl` | Публичный базовый URL файлов (то, что попадёт в манифест) | `http://localhost:8080` |
+| `S3__CdnBaseUrl` | Публичный базовый URL CDN **без имени бакета** (URL файлов: `<cdn>/builds/<buildId>/...`) | `http://localhost:8080` |
 | `S3__PublicRead` | Публичное чтение объектов (бакет делается read-only для всех) | `true` |
 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Учётные данные сервиса MinIO | `minioadmin` |
 
@@ -296,8 +315,24 @@ BootstrapAdminPassword=новый-пароль
 | Параметр | Описание | По умолчанию |
 |---|---|---|
 | `Build__RootPath` | Рабочая директория сборок внутри контейнера | `/app/builds` |
+| `Build__LogRetentionDays` | Удалять логи сборок старше N дней (`0` — не удалять) | `30` |
+| `Build__LogRetentionIntervalHours` | Интервал фоновой очистки логов | `24` |
+| `Build__LogRetentionMaxPerBuild` | Максимум строк лога на сборку (`0` — без лимита) | `0` |
 | `CurseForgeApiKey` | Ключ CurseForge API (см. [импорт модпаков](#импорт-модпаков)) | — |
 | `CurseForge__ApiKey` | То же, если задаётся как переменная окружения приложения | — |
+
+### Java runtime
+
+| Параметр | Описание | По умолчанию |
+|---|---|---|
+| `JavaRuntime__RootPath` | Директория кэша JRE (в Docker — `/app/java`) | `java` |
+| `JavaRuntime__CacheHours` | Сколько часов считать кэш свежим (`0` — проверять каждый раз) | `24` |
+| `JavaRuntime__AdoptiumApiBaseUrl` | База Adoptium API | `https://api.adoptium.net` |
+| `JavaRuntime__MinMajor` / `MaxMajor` | Допустимый диапазон версий Java | `8` / `64` |
+| `JavaRuntime__MaxArchiveBytes` | Максимальный размер архива JRE | `262144000` |
+
+Кэш JRE вынесен в Docker volume `java_data`; при первом запросе API скачивает Temurin
+с Adoptium, проверяет SHA-256 и отдаёт архив лаунчеру.
 
 ### Первый админ
 
@@ -307,12 +342,40 @@ BootstrapAdminPassword=новый-пароль
 | `BootstrapAdminUsername` | Фиксированный логин (перезаписывает пароль и роль) | — |
 | `BootstrapAdminPassword` | Фиксированный пароль | — |
 
+### Регистрация
+
+| Параметр | Описание | По умолчанию |
+|---|---|---|
+| `Registration__MaxAccountsPerDevice` | Аккаунтов на один `deviceID` | `2` |
+| `Registration__MaxAccountsPerIp` | Аккаунтов на одну подсеть | `4` |
+| `Registration__Ipv4PrefixLength` | Длина префикса IPv4 (`32` — точный адрес, `24` — весь блок) | `32` |
+| `Registration__Ipv6PrefixLength` | Длина префикса IPv6 | `64` |
+| `Registration__DeviceIdMinLength` / `MaxLength` | Допустимая длина `deviceID` | `16` / `128` |
+
+### Rate limiting
+
+| Параметр | Описание | По умолчанию |
+|---|---|---|
+| `RateLimiting__Api__PermitLimit` / `WindowSeconds` | Обычные `/api`-запросы | `120` / `60` |
+| `RateLimiting__Admin__PermitLimit` / `WindowSeconds` | Админка и poll-запросы | `600` / `60` |
+| `RateLimiting__Auth__PermitLimit` / `WindowSeconds` | Login и validate-token | `20` / `60` |
+| `RateLimiting__Register__PermitLimit` / `WindowSeconds` | Создание аккаунта | `10` / `600` |
+| `RateLimiting__Static__PermitLimit` / `WindowSeconds` | Статика и `/health` | `1000` / `10` |
+
 ### Прочее
 
 | Параметр | Описание | По умолчанию |
 |---|---|---|
 | `Redis__Host` / `Redis__Port` / `Redis__Username` / `Redis__Password` / `Redis__Ssl` | Подключение к Redis для распределённого кеша | не задан |
-| `CORS__AllowedOrigins` | Список разрешённых источников через запятую | любые |
+| `CORS__AllowedOrigins` | Разрешённые браузерные origins через запятую. Пусто в Production — same-origin | — / любые в Development |
+| `CORS__AllowCredentials` | Разрешать cookies в CORS (Bearer-токенам не нужно) | `false` |
+| `Access__BanCacheSeconds` | Сколько секунд кэшировать состояние бана/роли пользователя | `30` |
+| `Security__HstsMaxAgeDays` | `max-age` для HSTS при HTTPS | `365` |
+| `ForwardedHeaders__Enabled` | Обрабатывать `X-Forwarded-For` / `X-Forwarded-Proto` | `true` |
+| `ForwardedHeaders__ForwardLimit` | Сколько хопов прокси доверять | `1` |
+| `ForwardedHeaders__KnownProxies` | IP прокси через запятую (если задан — список по умолчанию заменяется) | loopback |
+| `ForwardedHeaders__KnownNetworks` | CIDR прокси через запятую (например `172.28.0.0/24`) | loopback |
+| `PROXY_SUBNET` | Подсеть `frontend`-сети compose; она же попадает в `KnownNetworks` | `172.28.0.0/24` |
 | `ASPNETCORE_ENVIRONMENT` | `Development` / `Production` | `Production` |
 | `ASPNETCORE_HTTP_PORTS` / `ASPNETCORE_HTTPS_PORTS` | Порты приложения | `8080` / `8081` |
 | `Logging__LogLevel__Default` | Уровень логирования | `Information` |
@@ -324,7 +387,9 @@ BootstrapAdminPassword=новый-пароль
 ```
 apiundermine/
 ├── docker-compose.yml              # postgres + minio + nginx + api
+├── docker-compose.tls.yml          # опциональный HTTPS-профиль
 ├── nginx.conf                      # CDN-прокси на MinIO с кешем и CORS
+├── nginx.tls.conf.example          # шаблон nginx с TLS
 ├── Dockerfile                      # multi-stage образ + temurin-21-jre
 ├── .env / .env.example             # конфигурация (в .gitignore)
 │
@@ -355,7 +420,6 @@ apiundermine/
 │   │   ├── UserService.cs / ServerService.cs
 │   │   ├── ConfigCacheService.cs          # кеш серверов и флага maintenance
 │   │   ├── ConfigUpdateService.cs         # фоновое обновление кеша
-│   │   ├── ApplicationStatusService.cs    # статус API для панели
 │   │   ├── AdminAuditService.cs           # аудит действий админов
 │   │   ├── GetUuid.cs                     # offline-UUID по логину
 │   │   ├── PasswordHasher/                # BCrypt
@@ -411,8 +475,7 @@ apiundermine/
 │   │   └── ServiceResultExtensions.cs
 │   │
 │   ├── Data/
-│   │   ├── AppDbContext.cs                  # DbContext и конфигурация модели
-│   │   └── IdentitySequence.cs              # перемотка sequences после удалений
+│   │   └── AppDbContext.cs                  # DbContext и конфигурация модели
 │   │
 │   ├── Migrations/                  # миграции EF Core
 │   └── wwwroot/admin/               # админ-панель (SPA без сборки)
@@ -427,25 +490,58 @@ apiundermine/
 
 | Параметр | Значение |
 |---|---|
-| Базовый URL (docker) | `http://localhost:5000` |
+| Базовый URL (docker, публичный) | `http://localhost:8080` |
+| Базовый URL (docker, только с хоста) | `http://localhost:5000` |
 | Префикс | `/api/v1.0` |
 | Аутентификация | `Authorization: Bearer <jwt>` |
 | Формат | JSON, `camelCase` |
 
 ### Аутентификация
 
-Токен содержит `sub` (id пользователя), `UserId`, имя пользователя, роль (`admin`/`user`)
-и `jti`. Срок жизни — **30 дней**. Проверяются подпись, издатель, аудитория и срок;
-допустимое отклонение часов — ноль.
+Токен содержит `sub` (id пользователя), `UserId`, имя пользователя, роль (`admin`/`user`),
+`token_version` и `jti`. Срок жизни — **30 дней**. Проверяются подпись, издатель, аудитория
+и срок; допустимое отклонение часов — ноль.
+
+`token_version` позволяет отзывать сессии: смена или сброс пароля инкрементирует версию
+в БД, после чего старые токены получают `401 TOKEN_REVOKED` (нужен повторный вход).
+Токены, выданные до появления этого поля, считаются версией `0` и остаются валидными,
+пока пароль не менялся.
+
+**Подпись — не единственная проверка.** На каждом запросе к эндпоинту с `[Authorize]`
+`AccountBanMiddleware` сверяет состояние аккаунта в БД:
+
+| Ситуация | Ответ |
+|---|---|
+| Аккаунт забанен | `403 ACCOUNT_BANNED` (+ `reason`, `expires_at`) |
+| Аккаунт удалён | `401 USER_NOT_FOUND` |
+| Роль в БД не совпадает с ролью в токене | `401 ROLE_CHANGED` (нужен повторный вход) |
+| Всё в порядке | запрос передаётся дальше |
+
+Результат кэшируется на `Access__BanCacheSeconds` (по умолчанию 30 секунд), поэтому
+бан/разбан и смена роли применяются максимум через полминуты даже к уже выданным токенам.
+Публичные эндпоинты (`/login`, `/register`, `[AllowAnonymous]`-манифесты) не блокируются.
 
 ### Ограничение частоты запросов
 
-| Область | Лимит |
-|---|---|
-| Пути, начинающиеся с `/api` | **15 запросов / 10 секунд** на IP, очередь не принимается |
-| Статика и прочее | 1000 запросов / 10 секунд (общий ключ) |
+Политики разделены по типу нагрузки. Авторизованные запросы считаются по `user id`,
+анонимные — по нормализованной подсети (IPv6 группируется по `/64`).
 
-При превышении — **HTTP 429** с пустым телом.
+| Политика | Где применяется | По умолчанию | Ключ |
+|---|---|---|---|
+| `api` | обычные `/api`-эндпоинты (пользователь, серверы, публичные манифесты) | 120 / 60 с | user id, иначе подсеть |
+| `admin` | админка, сборки, версии, пресеты, импорт модпаков | 600 / 60 с | user id |
+| `auth` | `login`, `validate-token` | 20 / 60 с | подсеть |
+| `register` | `POST /register` | 10 / 600 с | подсеть |
+| `static` | статика админки, `/health` и прочее вне `/api` | 1000 / 10 с | общий ключ |
+
+При превышении — **HTTP 429**, заголовок `Retry-After` и JSON:
+
+```json
+{ "status": 429, "error": "RATE_LIMITED", "message": "Too many requests. Please retry later.",
+  "retry_after": 12, "request_id": "…" }
+```
+
+Лимиты настраиваются через `RateLimiting__*` (см. раздел «Конфигурация»).
 
 ### Режим технических работ
 
@@ -453,7 +549,8 @@ apiundermine/
 админ-авторизованных возвращают **HTTP 503**:
 
 ```json
-{ "error": "MAINTENANCE", "message": "Server is under maintenance. Please try again later.", "request_id": "…" }
+{ "status": 503, "error": "MAINTENANCE",
+  "message": "Server is under maintenance. Please try again later.", "request_id": "…" }
 ```
 
 Администраторы блокировку обходят — иначе нельзя было бы её выключить. Статика админ-панели
@@ -462,24 +559,28 @@ apiundermine/
 
 ### Ошибки
 
-Необработанные исключения превращаются в:
+Все ошибки приводятся к одному конверту (MVC result filter + JWT challenge/forbid +
+maintenance + глобальный обработчик):
 
 ```json
-{ "status": 500, "request_id": "…", "message": "Internal server error. Please try again later." }
+{ "status": 400, "error": "CODE", "message": "…", "request_id": "…", "errors": { } }
 ```
 
-У конкретных эндпоинтов формат исторически различается — при интеграции учитывайте это:
+* `errors` присутствует только для ошибок валидации (`VALIDATION_ERROR`);
+* если эндпоинт не задал явный код, используется `HTTP_<status>`;
+* `401 UNAUTHORIZED` — нет/невалидный токен, `403 FORBIDDEN` — не хватает роли;
+* `500 INTERNAL_ERROR` — необработанное исключение;
+* `503 MAINTENANCE` — техработы;
+* `AccountBanMiddleware` дополнительно отдаёт `reason` и `expires_at`.
 
-| Стиль | Где | Пример |
-|---|---|---|
-| `{ "Error": "CODE", "Message": "…" }` | Админ-эндпоинты, сборки | `{"Error":"BUILD_NOT_FOUND"}` |
-| `{ "status": 401, "message": "…" }` | Аутентификация, пользователь, глобальный обработчик | `{"status":401,"message":"Invalid username or password!"}` |
-| `{ "error": "CODE", "message": "…" }` | `/servers`, техработы | `{"error":"SERVER_NOT_FOUND"}` |
-| Обычный текст | `AdminModsController` (моды пресетов) | `Preset not found` |
-| Пустое тело | Часть `AdminPresetsController`, `ServersController` | — |
+`request_id` есть в теле и в заголовках логов — по нему можно найти причину в логах.
 
-`request_id` есть в теле глобальной ошибки и в заголовках логов — по нему можно найти
-причину в логах приложения.
+Блокировки на уровне аккаунта (`AccountBanMiddleware`) отвечают отдельным конвертом:
+
+```json
+{ "status": 403, "error": "ACCOUNT_BANNED", "message": "…", "reason": "…",
+  "expires_at": 1790000000, "request_id": "…" }
+```
 
 ---
 
@@ -496,22 +597,31 @@ apiundermine/
 **`POST /register`**
 
 ```json
-{ "login": "player", "password": "secret", "deviceID": "device-123" }
+{ "login": "player", "password": "secret123", "deviceID": "0123456789abcdef0123456789abcdef" }
 ```
 
 * `login` — сохраняется в нижнем регистре; оригинал остаётся как `realname`.
-* Лимиты: 2 аккаунта на `deviceID`, 4 аккаунта с одного IP.
-* Ответы: `200` `{success, message, userId, login}`, `409` — логин занят,
-  `429` — превышен лимит, `400` — некорректные данные.
+* `deviceID` — обязателен, 16–128 символов, только `A-Za-z0-9._:-`. Слишком короткий,
+  длинный или содержащий посторонние символы идентификатор отклоняется с `400 INVALID_DEVICE_ID`.
+* Пароль — 8–72 байта в UTF-8; слишком короткий/длинный отклоняется с `400 WEAK_PASSWORD`.
+* Лимиты: по умолчанию 2 аккаунта на устройство и 4 на подсеть. Лимит по IP считается по
+  нормализованной подсети: IPv4 — по точному адресу (можно включить `/24` через
+  `Registration__Ipv4PrefixLength`), IPv6 — по `/64`, поэтому смена IPv6-адреса не обходит лимит.
+* Конкурентные регистрации сериализуются PostgreSQL advisory-блокировками, поэтому
+  одновременные запросы не могут превысить лимит.
+* Дополнительно действует строгий rate-limit на создание аккаунта
+  (`RateLimiting__Register__PermitLimit` за `RateLimiting__Register__WindowSeconds`).
+* Ответы: `200` `{success, message, userId, login}`, `409 USERNAME_TAKEN` — логин занят,
+  `429 DEVICE_LIMIT` / `429 IP_LIMIT` — превышен лимит, `400 INVALID_DEVICE_ID` — некорректный device ID.
 
 **`POST /login`**
 
 ```json
-{ "login": "player", "password": "secret" }
+{ "login": "player", "password": "secret123" }
 ```
 
 * Ответ `200`: `{success, userId, login, token, expiresIn}` (`expiresIn` = 2 592 000).
-* `401` — неверный логин/пароль; для забаненного — `401` с сообщением о бане.
+* `401` — неверный логин/пароль; для забаненного — `403 ACCOUNT_BANNED` с причиной и сроком.
 * При успехе обновляются `ip` и `lastlogin`.
 
 ### Пользователь
@@ -521,6 +631,7 @@ apiundermine/
 | `GET` | `/api/v1.0/user_data` | авторизован | Имя и UUID текущего пользователя |
 | `GET` | `/api/v1.0/user_data/statistics` | авторизован | Статистика текущего пользователя |
 | `GET` | `/api/v1.0/{id}/public-key` | авторизован | Публичный ключ пользователя по id |
+| `PATCH` | `/api/v1.0/user/password` | авторизован | Смена своего пароля: `{currentPassword, newPassword}`; возвращает новый JWT |
 
 ```json
 // GET /user_data
@@ -559,7 +670,7 @@ apiundermine/
 | Метод | Путь | Доступ | Описание |
 |---|---|---|---|
 | `POST` | `/api/v1.0/builds` | admin | Поставить сборку в очередь |
-| `GET` | `/api/v1.0/builds` | admin | Все сборки с прогрессом |
+| `GET` | `/api/v1.0/builds?page=1&pageSize=20&status=failed&query=tech` | admin | Постраничный список с фильтрами |
 | `GET` | `/api/v1.0/builds/{id}` | admin | Статус одной сборки (id — число) |
 | `GET` | `/api/v1.0/builds/{id}/logs?afterId=0&limit=200` | admin | Журнал обработки |
 | `DELETE` | `/api/v1.0/builds/{id}` | admin | Удалить сборку, файлы и объекты S3 |
@@ -568,6 +679,17 @@ apiundermine/
 > Обратите внимание: `/builds/{id}` — это числовой PK в БД, а `/builds/{buildId}/manifest` —
 > строковый `buildId` из 32 hex-символов. Это разные идентификаторы.
 
+`GET /builds` возвращает страницу:
+
+```json
+{ "items": [ { "id": 1, "name": "Tech pack", "status": "completed", "...": "..." } ],
+  "totalCount": 42, "page": 1, "pageSize": 20, "totalPages": 3 }
+```
+
+* `page` — с 1, `pageSize` — 1–100 (по умолчанию 20);
+* `status` — `pending`, `downloading`, `hashing`, `completed`, `failed`;
+* `query` — поиск по имени без учёта регистра.
+
 **`POST /builds`**
 
 ```json
@@ -575,10 +697,73 @@ apiundermine/
   "loader": "neoforge", "loaderVersion": "21.1.256", "buildPresetId": null }
 ```
 
-`loader` допускает только `vanilla`, `fabric`, `forge`, `neoforge`.
+`loader` допускает только `vanilla`, `fabric`, `forge`, `neoforge`. `mcVersion` проверяется
+по живому каталогу версий (best-effort): если версия не предлагается выбранным загрузчиком —
+`400 UNKNOWN_MC_VERSION`; если каталог временно недоступен, сборка всё равно создаётся.
 
 **`DELETE /builds/{id}`** удаляет строки БД, локальную папку сборки, загруженный архив
 модпака и объекты S3. Активную сборку удалить нельзя — `409 BUILD_IN_PROGRESS`.
+
+### Редактор сборок (админка)
+
+В таблице **Builds** кнопка **Edit** открывает редактор завершённой сборки:
+
+* **Settings** — имя, версия загрузчика и пресет; `DisplayName` в манифесте обновляется.
+* **Files** — файловый менеджер в стиле Pterodactyl: хлебные крошки, переход по папкам,
+  создание каталогов, загрузка в текущую папку, создание файла, действия `…` для
+  редактирования/скачивания/переименования/удаления. Текстовый редактор — UTF-8, до 2 МБ;
+  загрузка — до 256 МБ; бинарные файлы доступны только для скачивания/замены.
+* **Manifest** — просмотр актуального клиентского манифеста и его скачивание.
+
+После каждого изменения API обновляет S3-объект, строку `build_files` и `manifest_json`,
+поэтому лаунчер видит правку без полной пересборки. Пустые каталоги хранятся как
+S3-маркеры с ключом, оканчивающимся на `/`. Пути проверяются `BuildPathSafety`
+(без `..`, абсолютных путей и недопустимых символов).
+
+Большие сборки (4000+ файлов) открываются быстро: сборка и список файлов читаются
+двумя отдельными запросами, а S3 листается только на один уровень каталога.
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1.0/admin/builds/{id}/editor` | Настройки + полный список файлов |
+| `PUT` | `/api/v1.0/admin/builds/{id}/settings` | Сохранить имя/загрузчик/пресет |
+| `GET` | `/api/v1.0/admin/builds/{id}/manifest` | Актуальный манифест |
+| `GET` | `/api/v1.0/admin/builds/{id}/files?path=...` | Содержимое одного каталога |
+| `POST` | `/api/v1.0/admin/builds/{id}/directories` | Создать каталог |
+| `DELETE` | `/api/v1.0/admin/builds/{id}/directories?path=...` | Удалить каталог рекурсивно |
+| `GET/PUT` | `/api/v1.0/admin/builds/{id}/files/content?path=...` | Прочитать/сохранить текст |
+| `POST` | `/api/v1.0/admin/builds/{id}/files` | Загрузить файл (multipart) |
+| `GET` | `/api/v1.0/admin/builds/{id}/files/download?path=...` | Скачать файл |
+| `DELETE` | `/api/v1.0/admin/builds/{id}/files?path=...` | Удалить файл |
+| `POST` | `/api/v1.0/admin/builds/{id}/files/rename` | Переименовать/переместить файл |
+
+### Java runtime (для лаунчера)
+
+| Метод | Путь | Доступ | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1.0/java/{major}?os=windows&arch=x64` | авторизован | Метаданные JRE: версия, имя файла, размер, SHA-256, `downloadUrl` |
+| `GET` | `/api/v1.0/java/{major}/download?os=windows&arch=x64` | авторизован | Архив JRE; поддерживает `Range` для докачки |
+
+Пример ответа метаданных:
+
+```json
+{
+  "major": 21,
+  "os": "windows",
+  "arch": "x64",
+  "version": "21.0.13+9.0.LTS",
+  "fileName": "OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip",
+  "sizeBytes": 49106397,
+  "sha256": "2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628",
+  "downloadUrl": "/api/v1.0/java/21/download?os=windows&arch=x64"
+}
+```
+
+API скачивает Temurin из Adoptium один раз, проверяет размер и SHA-256 и кэширует архив
+в `JavaRuntime:RootPath` (`/app/java`, Docker volume `java_data`). Поддерживаются
+`os`: `windows|linux|mac`, `arch`: `x64|aarch64|x32|arm`; версия ограничена
+`JavaRuntime:MinMajor..MaxMajor` (по умолчанию 8–64). Лаунчер получает дескриптор,
+проверяет хеш перед распаковкой и не обращается к Adoptium/GitHub напрямую.
 
 ### Администрирование: пользователи
 
@@ -589,7 +774,7 @@ apiundermine/
 | `POST` | `/api/v1.0/admin/users/{id}/ban` | Бан: `{reason, durationDays}` (`null` — навсегда) |
 | `POST` | `/api/v1.0/admin/users/{id}/unban` | Снять все баны |
 | `PATCH` | `/api/v1.0/admin/users/{id}/role` | `{role: "admin"\|"user"}` |
-| `PATCH` | `/api/v1.0/admin/users/{id}/change-password` | `{newPassword}` (минимум 6 символов) |
+| `PATCH` | `/api/v1.0/admin/users/{id}/change-password` | `{newPassword}` (8–72 байта; старые токены пользователя отзываются) |
 
 ### Администрирование: серверы и режим
 
@@ -658,10 +843,14 @@ apiundermine/
 | Метод | Путь | Доступ | Описание |
 |---|---|---|---|
 | `GET` | `/api/v1.0/ip` | admin | IP клиента и все заголовки (отладка прокси) |
-| `GET` | `/health` | анонимно | Проверка состояния сервиса **и соединения с БД** (Npgsql) |
+| `GET` | `/health/live` | анонимно | Liveness: процесс жив, внешние зависимости не проверяются |
+| `GET` | `/health/ready` | анонимно | Readiness: доступен PostgreSQL (используется Docker healthcheck) |
+| `GET` | `/health` | анонимно | Полная проверка: PostgreSQL + MinIO/S3 |
 
-В ответе `/health` есть заголовок `api-supported-versions`. Эндпоинт не попадает под
-техработы и под лимит частоты запросов для `/api`.
+В ответе `/health` есть заголовок `api-supported-versions`. Эндпоинты не попадают под
+техработы и под лимит частоты запросов для `/api`. Если MinIO недоступен, `/health`
+возвращает `503`, а `/health/ready` продолжает отвечать `200` — API может раздавать
+манифесты, пока хранилище недоступно.
 
 ---
 
@@ -675,10 +864,11 @@ apiundermine/
 | `ServerService` | CRUD серверов, привязка сборок, обновление кеша, аудит |
 | `ConfigCacheService` | Кеш активных серверов и флага maintenance (+ зеркало в Redis) |
 | `ConfigUpdateService` | Фоновое обновление кеша раз в минуту и рассылка в Redis |
-| `ApplicationStatusService` | Фасад над кешем для панели |
 | `AdminAuditService` | Запись действий админов; ошибки аудита не ломают запрос |
 | `VersionCatalogService` | Версии Minecraft и загрузчиков из Mojang/Fabric/Forge/NeoForge |
-| `BuildWorkerService` | Фоновая очередь сборок, статусы, ретраи |
+| `BuildWorkerService` | Фоновая очередь сборок, статусы, ретраи, восстановление зависших сборок |
+| `BuildLockService` | Межпроцессная блокировка сборки (PostgreSQL advisory lock) |
+| `BuildLogRetentionService` | Фоновая очистка `build_logs` по возрасту и опциональному лимиту на сборку |
 | `BuildManifestService` | Хеширование, классификация политик, выгрузка в S3, манифест |
 | `EngineDownloadService` | Ванильный клиент + Fabric/Forge/NeoForge |
 | `S3StorageService` | S3/MinIO: бакет, политика, дедупликация по SHA-256 |
@@ -693,9 +883,12 @@ apiundermine/
 ### Middleware
 
 Порядок в пайплайне: Serilog → `RequestLoggingMiddleware` → `GlobalExceptionHandler` →
-`/health` → `ForwardedHeaders` → CORS → аутентификация → rate limiter →
-`ApiLockMiddleware` → авторизация → контроллеры → статика.
+`/health` → `ForwardedHeaders` → routing → CORS → аутентификация → rate limiter →
+`AccountBanMiddleware` → `ApiLockMiddleware` → авторизация → контроллеры → статика.
 
+* **AccountBanMiddleware** — перепроверяет аккаунт по токену: бан, удаление, смена роли.
+  Блокирует запрос до `ApiLockMiddleware`/авторизации, поэтому забаненный админ тоже
+  не может обойти техработы.
 * **RequestLoggingMiddleware** — генерирует `request_id`, пишет `Request started/completed`
   с длительностью и IP; ответы с кодом ≥ 400 логируются как `Warning`.
 * **GlobalExceptionHandler** — превращает любое необработанное исключение в
@@ -785,8 +978,23 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Упавшая сборка возвращается в очередь, пока попыток меньше трёх. Прерванные перезапуском
 сборки в состояниях `downloading`/`hashing` автоматически возвращаются в `pending` при
-старте. Скачивание идемпотентно: уже скачанные файлы с верным хешем пропускаются,
-частичные пишутся в `*.part`.
+старте и периодически (раз в 30 секунд, когда очередь простаивает). Скачивание
+идемпотентно: уже скачанные файлы с верным хешем пропускаются, частичные пишутся в `*.part`.
+
+**Несколько реплик API.** Каждая сборка обрабатывается только одним воркером: перед
+стартом воркер берёт PostgreSQL advisory lock по `build_instances.id` на отдельном
+соединении (`Pooling=false`). Если лок занят другой репликой, сборка пропускается.
+Восстановление «зависших» сборок тоже сначала пытается взять лок: если он занят, значит
+сборка всё ещё живёт в другом процессе, и её нельзя сбрасывать в `pending`. Lock
+удерживается heartbeat-запросом раз в 30 секунд и автоматически освобождается при
+закрытии соединения или падении процесса.
+
+### Ретеншен логов
+
+`BuildLogRetentionService` раз в `Build__LogRetentionIntervalHours` удаляет строки
+`build_logs` старше `Build__LogRetentionDays` дней. При необходимости можно включить
+жёсткий лимит строк на одну сборку (`Build__LogRetentionMaxPerBuild`, `0` — выключено).
+Очистка выполняется в фоне и не влияет на обработку сборок.
 
 ### Дедупликация
 
@@ -891,7 +1099,7 @@ Content-Type: multipart/form-data
    `forge-1.12.2-14.23.5.2860` → `forge` / `14.23.5.2860`. Неизвестные загрузчики
    (`quilt-loader`, `liteloader`, `rift`) отклоняются с понятной ошибкой.
 2. **Файлы.** Скачиваются параллельно с проверкой хешей; уже скачанное с верным хешем
-   пропускается. Для CurseForge каждая пара `projectID`/`fileID` резолвится через
+   пропускается. Индекс/манифест ограничен 20 000 файлами, архив — 1 ГБ. Для CurseForge каждая пара `projectID`/`fileID` резолвится через
    `GET /v1/mods/{modId}/files/{fileId}` (с повторами при `429`/`5xx`), файлы кладутся в
    `mods/` и проверяются по `sha1` и размеру. Если CurseForge не вернул `downloadUrl`,
    ссылка собирается из идентификатора файла
@@ -949,9 +1157,11 @@ Content-Type: multipart/form-data
 
 ### Раздача файлов
 
-Файлы лежат в MinIO по ключу `builds/{buildId}/{путь}` и раздаются через nginx
-(`http://localhost:8080/builds/...`) с кешированием, поддержкой `Range` и CORS-заголовками
-для лаунчера. URL собираются на сервере из `S3__CdnBaseUrl`.
+Файлы лежат в MinIO по ключу `builds/{buildId}/{путь}`. nginx срезает имя бакета и отдаёт
+их как `http://localhost:8080/builds/{buildId}/...` с кешированием, поддержкой `Range` и
+CORS-заголовками для лаунчера. URL собираются на сервере из `S3__CdnBaseUrl` **без бакета**
+(`<cdnBaseUrl>/builds/...`). Старые манифесты с `/minecraft-builds/builds/...` продолжают
+работать через общий `location /` в nginx.
 
 Манифест доступен в двух местах:
 
@@ -1014,13 +1224,12 @@ server_manifests ──build_id──► build_instances.build_id   (мягка�
 
 `global_settings` и `admin_audits` самостоятельны.
 
-### Обслуживание идентификаторов
+### Идентификаторы
 
-PostgreSQL-последовательности умеют только расти, поэтому после удаления последней строки
-номера продолжали бы расти бесконечно. `IdentitySequence.RewindAsync` перематывает
-последовательность обратно к текущему максимуму (для таблиц сборок, логов, пресетов и
-серверов). Ошибка перемотки никогда не должна ломать само удаление, поэтому вызовы обёрнуты
-в `try/catch`.
+ID сборок, файлов, логов, пресетов и серверов **никогда не переиспользуются**. После удаления
+запись исчезает, а её числовой ID остаётся «сгоревшим»; следующая запись получает следующий
+номер. Это осознанный отказ от перемотки PostgreSQL-sequences: старые ссылки, аудит и
+внешние интеграции не должны внезапно указывать на другую сущность.
 
 ---
 
@@ -1048,21 +1257,27 @@ Logging__LogLevel__Microsoft.AspNetCore=Warning
 
 | Мера | Реализация |
 |---|---|
-| Пароли | Только BCrypt-хеши |
+| Пароли | Только BCrypt-хеши; политика 8–72 байта (UTF-8) |
+| Перебор/энумерация | Для несуществующего логина выполняется «пустая» BCrypt-проверка (выравнивание времени) |
 | Токены | JWT HS256, проверка подписи, издателя, аудитоции и срока |
+| Отзыв сессий | `token_version` в JWT; смена/сброс пароля инкрементирует версию и инвалидирует старые токены (`401 TOKEN_REVOKED`) |
 | Ключ JWT | Приложение отказывается стартовать с ключом короче 32 символов |
 | Авторизация | Роль `admin` проверяется на всех административных эндпоинтах |
-| Rate limiting | 15 запросов / 10 секунд на IP для `/api` |
+| Состояние аккаунта | Бан/удаление/смена роли/версия токена перепроверяются на каждом защищённом запросе (`AccountBanMiddleware`) |
+| CORS | Только явный allow-list; в Production без него cross-origin запрещён |
+| Security headers | CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS при HTTPS |
+| IP за прокси | `X-Forwarded-*` принимаются только от доверенной сети nginx |
+| Rate limiting | Раздельные политики `api`/`admin`/`auth`/`register`/`static`, ключ — пользователь или подсеть, `Retry-After` + JSON при 429 |
 | Техработы | Блокировка публичного API, админы остаются доступны |
 | Ошибки | Наружу не отдаются внутренние детали, попадает `request_id` |
 | Аудит | Действия админов пишутся в `admin_audits` |
-| Регистрация | Лимиты на устройство и IP, хеширование пароля |
-| Обновление пароля админом | Требует минимум 6 символов |
+| Регистрация | Лимиты на устройство и IP, валидация deviceID, хеширование пароля |
+| Смена пароля | Пользователь — сам через `PATCH /user/password` (с текущим паролем), админ — через админку; старые сессии отзываются |
 
 ### Рекомендации для продакшена
 
-1. **Только HTTPS** через обратный прокси с сертификатом.
-2. **Ограничить CORS** конкретными доменами в `CORS__AllowedOrigins`.
+1. **Только HTTPS**: используйте `docker-compose.tls.yml` + `nginx.tls.conf.example` (см. раздел Docker).
+2. **CORS**: в Production без `CORS__AllowedOrigins` cross-origin закрыт; при необходимости перечислите домены явно.
 3. **Длинный `Jwt__Key`** — 64+ символов, генерировать случайно.
 4. **Сменить пароли MinIO** с `minioadmin`.
 5. **Регулярные бэкапы** PostgreSQL и бакета MinIO.
@@ -1111,6 +1326,13 @@ dotnet ef migrations script --project UnderMineApi/UnderMineApi.csproj
 | `20261013125219_RemoveServerConfigLinks` | Удаление устаревших связей |
 | `20261013130948_RemoveServerLinkColumns` | Удаление колонок связей |
 | `20261016070725_AddModpackImportToBuildInstances` | Импорт модпаков, пресеты сборок |
+| `20261106123739_AddRegistrationLimits` | Лимиты регистрации: `regip_prefix`, индексы |
+| `20261106125206_AddAuthHardening` | `token_version` для отзыва JWT |
+| `20261106131612_AddBuildQueryIndexes` | Индексы для пагинации сборок и ретеншена логов |
+
+> Миграции применяются автоматически при старте с ретраями
+> (`Database__MigrateRetries` / `Database__MigrateRetryDelaySeconds`). Если все попытки
+> неудачны, API завершается с ненулевым кодом, а не работает со старой схемой.
 
 ---
 
@@ -1120,12 +1342,50 @@ dotnet ef migrations script --project UnderMineApi/UnderMineApi.csproj
 
 | Сервис | Образ | Порт (host) | Роль |
 |---|---|---|---|
-| `api` | собирается из `Dockerfile` | `5000` → 8080 | REST API и админ-панель |
-| `postgres` | `postgres:16` | `5432` | База данных |
-| `minio` | `dhi.io/minio:latest` | `9000`, `9001` | S3-хранилище файлов |
-| `nginx` | `nginx:alpine` | `8080` → 80 | CDN, кеш, CORS |
+| `api` | собирается из `Dockerfile` | `127.0.0.1:5000` → 8080 | REST API и админ-панель |
+| `postgres` | `${POSTGRES_IMAGE:-postgres:16}` | `127.0.0.1:5432` | База данных |
+| `minio` | `${MINIO_IMAGE:-dhi.io/minio:latest}` | `127.0.0.1:9000`, `9001` | S3-хранилище файлов |
+| `nginx` | `${NGINX_IMAGE:-nginx:1.27-alpine}` | `8080` → 80 | Публичный вход: API, админка, CDN, кеш, CORS |
+
+Образы вынесены в переменные `POSTGRES_IMAGE` / `MINIO_IMAGE` / `NGINX_IMAGE`. Для продакшена
+зафиксируйте MinIO по digest (см. комментарий в `.env.example`).
 
 Тома: `postgres_data`, `minio_data`, `builds_data`.
+
+### Healthchecks
+
+У всех сервисов есть Docker healthcheck, а зависимости поднимаются по `condition: service_healthy`:
+
+| Сервис | Проверка |
+|---|---|
+| `postgres` | `pg_isready` |
+| `minio` | TCP-подключение к `:9000` (в hardened-образе нет `curl`/`mc`) |
+| `api` | `curl /health/ready` (PostgreSQL; миграции уже применены) |
+| `nginx` | `wget /health` |
+
+API-образ сохраняет `curl` специально для healthcheck. Все сервисы запускаются с
+`restart: unless-stopped`, поэтому падение контейнера поднимается автоматически.
+
+### TLS (HTTPS)
+
+В базовом compose nginx слушает только HTTP на `8080`. Для HTTPS есть готовый профиль:
+
+```bash
+# 1. Сертификаты (Let's Encrypt / ваши собственные)
+mkdir -p certs
+cp /etc/letsencrypt/live/example.com/fullchain.pem certs/
+cp /etc/letsencrypt/live/example.com/privkey.pem certs/
+
+# 2. Конфиг nginx с TLS (копия из шаблона)
+cp nginx.tls.conf.example nginx.tls.conf
+
+# 3. Запуск с override-файлом
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+```
+
+В TLS-профиле: HTTP (`80`) редиректит на HTTPS, `443` терминирует TLS, HSTS добавляется
+nginx и API, `/api/`, `/admin/` и `/builds/` работают как раньше. Папка `certs/` и
+`nginx.tls.conf` в `.gitignore` — ключи не попадут в репозиторий.
 
 ### Образ API
 
@@ -1150,6 +1410,36 @@ docker compose down -v              # остановить и удалить д�
 
 ---
 
+## CI/CD
+
+### GitHub Actions
+
+Основной workflow: `.github/workflows/ci.yml`.
+
+- На `pull_request`: `dotnet restore/build/test`, `node --check` и Docker build
+  без публикации образа.
+- На `push` в `master`: то же плюс публикация в GHCR.
+- Теги: `ghcr.io/skufiks/undermine-api:sha-<full-sha>` и `latest`.
+- Образы из PR никогда не публикуются.
+
+Локальная сборка и публикация:
+
+```bash
+bash deploy-local.sh --tags staging
+```
+
+### Деплой
+
+Ansible-деплой запускается из GitHub Environments `staging` и `production`.
+Секреты (`SSH_PRIVATE_KEY`, `ANSIBLE_INVENTORY`, `VAULT_ADDR`, `VAULT_TOKEN`)
+хранятся в environment, а `inventory.ini` и `group_vars/all/main.yml`
+генерируются в workflow и не коммитятся.
+
+Полный blueprint деплой-воркфлоу, список секретов и порядок отката:
+[`.github/workflows/README.md`](.github/workflows/README.md).
+
+---
+
 ## Разработка
 
 ### Проекты в решении
@@ -1158,9 +1448,14 @@ docker compose down -v              # остановить и удалить д�
 |---|---|
 | `UnderMineApi` | Основное веб-приложение |
 | `ManifestGenerator` | CLI-утилита: строит манифест из готовой папки сборки |
+| `UnderMineApi.Tests` | xUnit-тесты (unit/harness) |
 
-Отдельного проекта с автотестами в решении нет; проверка изменений выполняется сборкой
-(`dotnet build`) и интеграционными проверками через запущенный стек.
+Проверка изменений:
+
+```bash
+dotnet build UnderMineApi.sln
+dotnet test UnderMineApi.sln
+```
 
 ### ManifestGenerator
 
@@ -1182,6 +1477,7 @@ dotnet run --project ManifestGenerator -- \
 ```bash
 dotnet restore
 dotnet build
+dotnet test
 dotnet run --project UnderMineApi/UnderMineApi.csproj
 dotnet watch run --project UnderMineApi/UnderMineApi.csproj
 dotnet list package --outdated

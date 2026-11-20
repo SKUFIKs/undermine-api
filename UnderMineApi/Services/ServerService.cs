@@ -111,17 +111,7 @@ namespace UnderMineApi.Services
             _context.ServerManifests.Remove(server);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Rewind the sequence so the freed server id is reused by the next server.
-            // Housekeeping only - never fail the delete over it.
-            try
-            {
-                await _context.RewindAsync(IdentitySequence.Servers, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to rewind identity sequence after deleting server {ServerId}", id);
-            }
-
+            // Deleted server ids are retired and never reused.
             try
             {
                 await _cache.RefreshCacheAsync(cancellationToken);

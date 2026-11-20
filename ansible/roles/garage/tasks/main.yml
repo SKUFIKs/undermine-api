@@ -1,0 +1,155 @@
+---
+- name: Require Garage RPC secret
+  ansible.builtin.assert:
+    that:
+      - garage_rpc_secret is defined
+      - garage_rpc_secret | length >= 32
+    fail_msg: >-
+      Set garage_rpc_secret in HashiCorp Vault
+      (secret/undermine-api/tokens by default).
+      It must be identical on all three Garage nodes.
+
+- name: Require Garage web root domain
+  ansible.builtin.assert:
+    that:
+      - garage_web_root_domain is defined
+      - garage_web_root_domain | length > 0
+    fail_msg: >-
+      Set garage_web_root_domain in group_vars/all/main.yml,
+      for example cdn.example.com.
+
+- name: Create garage group
+  ansible.builtin.group:
+    name: "{{ garage_group }}"
+    system: true
+
+- name: Create garage user
+  ansible.builtin.user:
+    name: "{{ garage_user }}"
+    group: "{{ garage_group }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create Garage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ garage_user }}"
+    group: "{{ garage_group }}"
+    mode: '0750'
+  loop:
+    - "{{ garage_config_dir }}"
+    - "{{ garage_meta_dir }}"
+    - "{{ garage_data_dir }}"
+
+- name: Download Garage server binary
+  ansible.builtin.get_url:
+    url: "{{ garage_binary_url }}"
+    dest: /usr/local/bin/garage
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Restart Garage
+
+- name: Check whether garage.toml already exists
+  ansible.builtin.stat:
+    path: "{{ garage_config_file }}"
+  register: garage_config_stat
+
+- name: Generate the initial garage.toml configuration
+  ansible.builtin.template:
+    src: garage.toml.j2
+    dest: "{{ garage_config_file }}"
+    owner: "{{ garage_user }}"
+    group: "{{ garage_group }}"
+    mode: '0600'
+  notify: Restart Garage
+  no_log: true
+  when: not garage_config_stat.stat.exists
+
+- name: Generate systemd service
+  ansible.builtin.template:
+    src: garage.service.j2
+    dest: /etc/systemd/system/garage.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Garage
+
+- name: Remove public Garage S3/web/RPC rules from the previous run
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+    delete: true
+  loop:
+    - "{{ garage_s3_port }}"
+    - "{{ garage_rpc_port }}"
+    - "{{ garage_web_port }}"
+  failed_when: false
+
+- name: Allow Garage RPC only from the other Garage nodes
+  community.general.ufw:
+    rule: allow
+    port: "{{ garage_rpc_port }}"
+    proto: tcp
+    from_ip: >-
+      {{ (hostvars[item]['garage_rpc_public_addrs'] | default({}))[item]
+         | default(hostvars[item]['garage_rpc_public_addr']
+         | default(hostvars[item]['ansible_host'])) }}
+  loop: "{{ groups['garage'] | difference([inventory_hostname]) }}"
+
+- name: Enable and start Garage
+  ansible.builtin.systemd:
+    name: garage
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for the Garage RPC port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ garage_rpc_port }}"
+    timeout: 30
+
+- name: Read the local Garage node id
+  ansible.builtin.command: >-
+    /usr/local/bin/garage -c {{ garage_config_file }} node id
+  become: true
+  become_user: "{{ garage_user }}"
+  register: garage_node_id_raw
+  changed_when: false
+  retries: 15
+  delay: 2
+  until: garage_node_id_raw.rc == 0
+
+- name: Store the local Garage node id
+  ansible.builtin.set_fact:
+    garage_bootstrap_entry: "{{ garage_node_id_raw.stdout_lines[0] | trim }}"
+    garage_node_id: "{{ (garage_node_id_raw.stdout_lines[0] | trim).split('@')[0] }}"
+
+- name: Build bootstrap peers from the other Garage nodes
+  ansible.builtin.set_fact:
+    garage_bootstrap_peers: >-
+      {{ groups['garage']
+         | difference([inventory_hostname])
+         | map('extract', hostvars, 'garage_bootstrap_entry')
+         | list }}
+
+- name: Re-template garage.toml with bootstrap peers
+  ansible.builtin.template:
+    src: garage.toml.j2
+    dest: "{{ garage_config_file }}"
+    owner: "{{ garage_user }}"
+    group: "{{ garage_group }}"
+    mode: '0600'
+  notify: Restart Garage
+  no_log: true
+
+- name: Apply the peer configuration before bootstrap
+  ansible.builtin.meta: flush_handlers
+
+- name: Bootstrap the Garage cluster
+  ansible.builtin.include_tasks: bootstrap.yml
+  when: garage_bootstrap | default(false)

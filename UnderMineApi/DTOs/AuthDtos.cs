@@ -47,3 +47,12 @@ public class ValidationResponseDto
     public bool Valid { get; set; }
     public string Message { get; set; } = string.Empty;
 }
+
+public class ChangePasswordRequestDto
+{
+    [Required]
+    public string CurrentPassword { get; set; } = string.Empty;
+
+    [Required]
+    public string NewPassword { get; set; } = string.Empty;
+}

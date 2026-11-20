@@ -1,24 +1,31 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
+using UnderMineApi.DTOs;
+using UnderMineApi.Extensions;
+using UnderMineApi.Services;
 
 namespace UnderMineApi.Controllers;
 
 [ApiController]
 [Route("api/v1.0/admin/presets")]
 [Authorize(Roles = "admin")]
+[EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminPresetsController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly ILogger<AdminPresetsController> _logger;
+    private readonly AdminAuditService _audit;
 
-    public AdminPresetsController(AppDbContext context, ILogger<AdminPresetsController> logger)
+    public AdminPresetsController(AppDbContext context, AdminAuditService audit)
     {
         _context = context;
-        _logger = logger;
+        _audit = audit;
     }
+
+    private string Actor => User.Identity?.Name ?? "system";
 
     [HttpGet]
     public async Task<IActionResult> GetPresets(CancellationToken ct)
@@ -38,27 +45,47 @@ public class AdminPresetsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreatePreset([FromBody] BuildPreset preset, CancellationToken ct)
+    public async Task<IActionResult> CreatePreset([FromBody] BuildPresetUpsertDto request, CancellationToken ct)
     {
-        preset.Id = 0;
-        preset.CreatedAt = DateTime.UtcNow;
-        preset.UpdatedAt = DateTime.UtcNow;
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var preset = new BuildPreset
+        {
+            Name = request.Name.Trim(),
+            GameVersion = request.GameVersion.Trim(),
+            LoaderType = request.LoaderType.Trim().ToLowerInvariant(),
+            LoaderVersion = string.IsNullOrWhiteSpace(request.LoaderVersion)
+                ? null
+                : request.LoaderVersion.Trim(),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
         _context.BuildPresets.Add(preset);
         await _context.SaveChangesAsync(ct);
-        return CreatedAtAction(nameof(GetPresets), new { id = preset.Id }, preset);
+        await _audit.LogAsync(Actor, "create_preset", "preset", preset.Id, preset.Name, ct);
+        return CreatedAtAction(nameof(GetPreset), new { id = preset.Id }, preset);
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> UpdatePreset(long id, [FromBody] BuildPreset updated, CancellationToken ct)
+    public async Task<IActionResult> UpdatePreset(long id, [FromBody] BuildPresetUpsertDto request, CancellationToken ct)
     {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
         var preset = await _context.BuildPresets.FindAsync([id], ct);
         if (preset == null) return NotFound();
-        preset.Name = updated.Name;
-        preset.GameVersion = updated.GameVersion;
-        preset.LoaderType = updated.LoaderType;
-        preset.LoaderVersion = updated.LoaderVersion;
+
+        preset.Name = request.Name.Trim();
+        preset.GameVersion = request.GameVersion.Trim();
+        preset.LoaderType = request.LoaderType.Trim().ToLowerInvariant();
+        preset.LoaderVersion = string.IsNullOrWhiteSpace(request.LoaderVersion)
+            ? null
+            : request.LoaderVersion.Trim();
         preset.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
+        await _audit.LogAsync(Actor, "update_preset", "preset", preset.Id, preset.Name, ct);
         return Ok(preset);
     }
 
@@ -69,17 +96,9 @@ public class AdminPresetsController : ControllerBase
         if (preset == null) return NotFound();
         _context.BuildPresets.Remove(preset);
         await _context.SaveChangesAsync(ct);
+        await _audit.LogAsync(Actor, "delete_preset", "preset", id, preset.Name, ct);
 
-        // Rewind the sequence so the freed id is reused by the next preset. Housekeeping only.
-        try
-        {
-            await _context.RewindAsync(IdentitySequence.Presets, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not rewind identity sequence after deleting preset {Id}", id);
-        }
-
+        // Deleted preset ids are retired and never reused.
         return NoContent();
     }
 }

@@ -1,0 +1,29 @@
+---
+# Template for ansible/group_vars/all/main.yml.
+#
+# This file contains ONLY Vault connection/path settings.
+# All deploy variables and secrets live in HashiCorp Vault KV v2:
+#
+#   kv/undermine-api/config    -> vars + hosts (non-secret)
+#   kv/undermine-api/tokens    -> ghcr_token, cloudflare_token, garage_rpc_secret
+#   kv/undermine-api/database  -> app_pass, repl_pass, staging_pass
+#   kv/undermine-api/app       -> application env (JWT, admin, S3, Build, limits)
+#
+# Never commit the real Vault token. Export it in the shell:
+#
+#   export VAULT_TOKEN=...
+#
+# or (not recommended, shell history):
+#
+#   ansible-playbook ... -e hashicorp_vault_token=...
+#
+# main.yml is git-ignored.
+
+hashicorp_vault_url: "https://vault.example.com"
+hashicorp_vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+hashicorp_vault_namespace: ""
+hashicorp_vault_mount_point: kv
+hashicorp_vault_config_path: undermine-api/config
+hashicorp_vault_tokens_path: undermine-api/tokens
+hashicorp_vault_database_path: undermine-api/database
+hashicorp_vault_app_path: undermine-api/app

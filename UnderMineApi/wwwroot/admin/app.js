@@ -1,11 +1,29 @@
 const API_BASE = '/api/v1.0';
 let token = localStorage.getItem('admin_token') || null;
 let currentPage = 'dashboard';
+let buildsPage = 1;
+const buildsPageSize = 20;
+let buildsTotalPages = 0;
+let buildsStatus = '';
 let buildsTimer = null;
 let buildLogTimer = null;
 let searchTimer = null;
 let userQuery = '';
 let serverBuilds = []; // completed builds offered by the server-modal build picker
+
+// Build editor state (modal). The file list is loaded once per build and kept in memory;
+// editing a file updates both the list entry and the stored manifest through the API.
+let editorBuild = null;
+let editorFiles = [];
+let editorDirectories = [];
+let editorBreadcrumbs = [];
+let editorCurrentPath = '';
+let editorSelectedPath = null;
+let editorFileContent = null;
+let editorDirty = false;
+let editorTab = 'files';
+let editorPresets = [];
+let editorSearch = '';
 
 // ---------- helpers ----------
 
@@ -65,6 +83,12 @@ function fmtLogTime(value) {
     return isNaN(d.getTime()) ? '' : d.toLocaleString();
 }
 
+function fmtTimestamp(value) {
+    if (!value) return '—';
+    const d = new Date(String(value).replace(/(\.\d{3})\d+/, '$1'));
+    return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
 // ---------- toast notifications ----------
 //
 // The admin panel never uses blocking toast('error', ): errors and confirmations slide in from
@@ -111,6 +135,14 @@ const API_ERROR_TEXT = {
     'MODPACK_NOT_FOUND': 'Modrinth project or version not found. Check the slug / version ID.',
     'SERVER_ALREADY_EXISTS': 'A server with this name already exists.',
     'BUILD_IN_PROGRESS': 'The build is being processed right now. Wait for it to finish.',
+    'BUILD_NOT_EDITABLE': 'Files can only be edited after the build has completed.',
+    'BUILD_FILE_NOT_FOUND': 'File not found in this build.',
+    'MANIFEST_NOT_READY': 'The build has no client manifest yet.',
+    'INVALID_PATH': 'Invalid file path.',
+    'FILE_TOO_LARGE': 'The file is too large for this action.',
+    'FILE_ALREADY_EXISTS': 'A file with that path already exists.',
+    'NOT_TEXT_FILE': 'This file type cannot be edited as text. Upload a replacement instead.',
+    'PRESET_MISMATCH': 'The preset does not match this build\'s Minecraft version or loader.',
     'INVALID_FILE_TYPE': 'Only .mrpack or .zip (CurseForge) files are accepted.',
     'VALIDATION_ERROR': 'Validation failed — check the form fields.',
     'UNAUTHORIZED': 'Your session is not valid. Please sign in again.',
@@ -232,12 +264,12 @@ async function loadDashboard() {
         const [users, servers, builds, maintenance] = await Promise.all([
             api('/admin/users?page=1&pageSize=1'),
             api('/admin/servers'),
-            api('/builds'),
+            api('/builds?page=1&pageSize=1'),
             api('/admin/status/maintenance')
         ]);
         document.getElementById('stat-users').textContent = users.totalCount || 0;
         document.getElementById('stat-servers').textContent = (servers || []).filter(s => s.isActive).length;
-        document.getElementById('stat-builds').textContent = (builds || []).length;
+        document.getElementById('stat-builds').textContent = (builds && builds.totalCount) || 0;
         const mt = document.getElementById('stat-maintenance');
         mt.textContent = maintenance.isMaintenance ? 'ON' : 'OFF';
         mt.className = maintenance.isMaintenance ? 'is-on' : 'is-off';
@@ -335,8 +367,8 @@ async function loadServers() {
                 <td>${esc(s.ipAddress)}</td>
                 <td><span class="status ${s.isActive ? 'status-active' : 'status-inactive'}">${s.isActive ? 'Active' : 'Inactive'}</span></td>
                 <td>
-                    <button class="btn btn-sm" onclick="editServer(${s.id})">Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteServer(${s.id})">Delete</button>
+                    <button class="btn btn-sm" data-action="edit-server" data-id="${s.id}">Edit</button>
+                    <button class="btn btn-sm btn-danger" data-action="delete-server" data-id="${s.id}">Delete</button>
                 </td>
             </tr>
         `).join('');
@@ -367,9 +399,9 @@ async function loadPresets() {
                 <td>${esc(p.loaderVersion || '')}</td>
                 <td>${(p.mods || []).length}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="editPreset(${p.id})">Edit</button>
-                    <button class="btn btn-sm" onclick="managePresetMods(${p.id})">Mods</button>
-                    <button class="btn btn-sm btn-danger" onclick="deletePreset(${p.id})">Delete</button>
+                    <button class="btn btn-sm" data-action="edit-preset" data-id="${p.id}">Edit</button>
+                    <button class="btn btn-sm" data-action="manage-preset-mods" data-id="${p.id}">Mods</button>
+                    <button class="btn btn-sm btn-danger" data-action="delete-preset" data-id="${p.id}">Delete</button>
                 </td>
             </tr>
         `).join('');
@@ -407,7 +439,7 @@ async function editPreset(id) {
             <label>Loader Version</label>
             <input type="text" id="preset-loader-version" value="${esc(preset.loaderVersion || '')}">
         </div>
-        <button class="btn btn-primary" onclick="savePreset(${id})">Save</button>
+        <button class="btn btn-primary" data-action="save-preset" data-id="${id}">Save</button>
     `);
 }
 
@@ -452,7 +484,7 @@ async function managePresetMods(presetId) {
         <div class="form-group">
             <label>Search Modrinth</label>
             <input type="text" id="modrinth-search" placeholder="Search mods...">
-            <button class="btn btn-sm" onclick="searchModrinth(${presetId})">Search</button>
+            <button class="btn btn-sm" data-action="search-modrinth" data-id="${presetId}">Search</button>
         </div>
         <div id="modrinth-results"></div>
         <h4>Current Mods</h4>
@@ -466,8 +498,8 @@ async function managePresetMods(presetId) {
                         <td>${esc(m.targetFolder)}</td>
                         <td><span class="status ${m.isEnabled ? 'status-active' : 'status-inactive'}">${m.isEnabled ? 'Enabled' : 'Disabled'}</span></td>
                         <td>
-                            <button class="btn btn-sm" onclick="togglePresetMod(${presetId}, '${m.id}')">${m.isEnabled ? 'Disable' : 'Enable'}</button>
-                            <button class="btn btn-sm btn-danger" onclick="deletePresetMod(${presetId}, '${m.id}')">Delete</button>
+                            <button class="btn btn-sm" data-action="toggle-mod" data-preset-id="${presetId}" data-mod-id="${esc(m.id)}">${m.isEnabled ? 'Disable' : 'Enable'}</button>
+                            <button class="btn btn-sm btn-danger" data-action="delete-mod" data-preset-id="${presetId}" data-mod-id="${esc(m.id)}">Delete</button>
                         </td>
                     </tr>
                 `).join('')}
@@ -486,7 +518,7 @@ async function managePresetMods(presetId) {
                 <option value="resourcepacks">resourcepacks</option>
             </select>
         </div>
-        <button class="btn btn-primary" onclick="uploadCustomMod(${presetId})">Upload</button>
+        <button class="btn btn-primary" data-action="upload-custom-mod" data-id="${presetId}">Upload</button>
     `);
 }
 
@@ -513,7 +545,7 @@ async function searchModrinth(presetId) {
                 <tr>
                     <td>${esc(h.title)}</td>
                     <td>${esc(h.description)}</td>
-                    <td><button class="btn btn-sm" onclick="addModrinthMod(${presetId}, '${esc(h.slug)}')">Add</button></td>
+                    <td><button class="btn btn-sm" data-action="add-modrinth-mod" data-preset-id="${presetId}" data-slug="${esc(h.slug)}">Add</button></td>
                 </tr>
             `).join('') + '</tbody></table>';
     } catch (e) {
@@ -523,7 +555,11 @@ async function searchModrinth(presetId) {
     }
 }
 
-async function addModrinthMod(presetId, slug) {
+async function addModrinthMod(el) {
+    const presetId = el && el.dataset ? el.dataset.presetId : '';
+    const slug = el && el.dataset ? (el.dataset.slug || '') : '';
+    if (!presetId || !slug) return;
+
     try {
         await api(`/admin/presets/${presetId}/mods/modrinth`, {
             method: 'POST',
@@ -536,7 +572,11 @@ async function addModrinthMod(presetId, slug) {
     }
 }
 
-async function togglePresetMod(presetId, modId) {
+async function togglePresetMod(el) {
+    const presetId = el && el.dataset ? el.dataset.presetId : '';
+    const modId = el && el.dataset ? el.dataset.modId : '';
+    if (!presetId || !modId) return;
+
     try {
         await api(`/admin/presets/${presetId}/mods/${modId}/toggle`, { method: 'PATCH', body: '{}' });
         managePresetMods(presetId);
@@ -545,7 +585,10 @@ async function togglePresetMod(presetId, modId) {
     }
 }
 
-async function deletePresetMod(presetId, modId) {
+async function deletePresetMod(el) {
+    const presetId = el && el.dataset ? el.dataset.presetId : '';
+    const modId = el && el.dataset ? el.dataset.modId : '';
+    if (!presetId || !modId) return;
     if (!confirm('Delete this mod?')) return;
     try {
         await api(`/admin/presets/${presetId}/mods/${modId}`, { method: 'DELETE' });
@@ -595,7 +638,7 @@ document.getElementById('add-preset-btn').addEventListener('click', () => {
             <label>Loader Version</label>
             <input type="text" id="preset-loader-version" placeholder="0.19.5">
         </div>
-        <button class="btn btn-primary" onclick="createPreset()">Create</button>
+        <button class="btn btn-primary" data-action="create-preset">Create</button>
     `);
 });
 
@@ -815,8 +858,8 @@ function serverModal(server, builds) {
             <label for="server-active" class="inline">Visible to players</label>
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" onclick="${isEdit ? `saveServer(${s.id})` : 'saveServer()'}">Save</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" data-action="save-server" data-id="${isEdit ? s.id : ''}">Save</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
 
@@ -830,9 +873,14 @@ function serverModal(server, builds) {
     if (buildEl) buildEl.addEventListener('change', () => { serverBuildChoice = buildEl.value; });
 }
 
+async function fetchCompletedBuilds() {
+    const page = await api('/builds?page=1&pageSize=100&status=completed');
+    return (page && page.items) || [];
+}
+
 async function addServer() {
     try {
-        const builds = await api('/builds');
+        const builds = await fetchCompletedBuilds();
         serverModal(null, builds);
     } catch (e) {
         // The build picker is optional - open the modal anyway.
@@ -845,7 +893,7 @@ async function editServer(id) {
         // Single server endpoint also returns config + build manifest straight from the database.
         const [server, builds] = await Promise.all([
             api(`/admin/servers/${id}`),
-            api('/builds')
+            fetchCompletedBuilds()
         ]);
         serverModal(server, builds);
     } catch (e) {
@@ -929,8 +977,8 @@ function addBuild() {
         </div>
         <p class="hint" id="build-versions-hint" style="display:none"></p>
         <div class="btn-group">
-            <button class="btn btn-primary" onclick="saveBuild()">Create</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" data-action="save-build">Create</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
 
@@ -953,8 +1001,8 @@ async function saveBuild() {
     try {
         await api('/builds', { method: 'POST', body: JSON.stringify(data) });
         closeModal();
-        toast('success', 'Build queued — track its progress in the table.');
-        await loadBuilds();
+        toast('success', 'Build queued - track its progress in the table.');
+        await loadBuilds(false, true);
     } catch (e) {
         toast('error', e.message);
     }
@@ -983,7 +1031,7 @@ function importModpack(focusCurseForgeFile) {
             <input type="text" id="mp-version-id" placeholder="e.g. abc123...">
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" id="mp-modrinth-btn" onclick="importModpackFromModrinth()">Import from Modrinth</button>
+            <button class="btn btn-primary" id="mp-modrinth-btn" data-action="import-modpack-modrinth">Import from Modrinth</button>
         </div>
         <hr>
         <h4>From file (Modrinth or CurseForge)</h4>
@@ -994,8 +1042,8 @@ function importModpack(focusCurseForgeFile) {
             CurseForge packs need <code>CurseForgeApiKey</code> in the server's .env.</p>
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" id="mp-file-btn" onclick="importModpackFromFile()">Import file</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
         <p class="hint">The server auto-detects the format (Modrinth .mrpack or CurseForge .zip).
         It prepares the matching engine (Fabric / Forge / NeoForge), downloads all client files
@@ -1053,7 +1101,7 @@ async function importModpackFromModrinth() {
             })
         });
         closeModal();
-        await loadBuilds();
+        await loadBuilds(false, true);
         toast('success', `Build queued: ${build.name} (${build.mcVersion}, ${build.loaderType}). Track it in the builds table.`);
     } catch (e) {
         toast('error', e.message);
@@ -1087,7 +1135,7 @@ async function importModpackFromFile() {
 
         const build = await api('/admin/builds/import-modpack/file', { method: 'POST', body: fd });
         closeModal();
-        await loadBuilds();
+        await loadBuilds(false, true);
         toast('success', `Build queued: ${build.name} (${build.mcVersion}, ${build.loaderType}). Track it in the builds table.`);
     } catch (e) {
         toast('error', e.message);
@@ -1096,19 +1144,40 @@ async function importModpackFromFile() {
     }
 }
 
-async function loadBuilds(silent = false) {
+async function loadBuilds(silent = false, resetPage = false) {
     try {
-        const builds = await api('/builds');
-        const tbody = document.querySelector('#builds-table tbody');
+        if (resetPage) buildsPage = 1;
 
-        if (!builds || !builds.length) {
-            tbody.innerHTML = '<tr><td colspan="8">No builds yet. Use "Create Build" to queue one.</td></tr>';
+        const params = new URLSearchParams({
+            page: String(buildsPage),
+            pageSize: String(buildsPageSize)
+        });
+        if (buildsStatus) params.set('status', buildsStatus);
+
+        const data = await api('/builds?' + params.toString());
+        const builds = (data && data.items) || [];
+        buildsTotalPages = (data && data.totalPages) || 0;
+
+        // A deletion may leave the current page empty; fall back to the last page.
+        if (buildsPage > 1 && buildsTotalPages > 0 && buildsPage > buildsTotalPages) {
+            buildsPage = buildsTotalPages;
+            return loadBuilds(silent);
+        }
+
+        const tbody = document.querySelector('#builds-table tbody');
+        updateBuildsPager(data);
+
+        if (!builds.length) {
+            tbody.innerHTML = buildsStatus
+                ? '<tr><td colspan="8">No builds with this status.</td></tr>'
+                : '<tr><td colspan="8">No builds yet. Use "Create Build" to queue one.</td></tr>';
             return;
         }
 
         tbody.innerHTML = builds.map(b => {
             const busy = b.status === 'downloading' || b.status === 'hashing' || b.status === 'pending';
             const canDelete = b.status === 'completed' || b.status === 'failed';
+            const canEdit = b.status === 'completed';
             const error = cleanError(b.errorMessage);
             const progress = (b.status === 'downloading' || b.status === 'hashing')
                 && b.progressPercent !== null && b.progressPercent !== undefined
@@ -1127,9 +1196,10 @@ async function loadBuilds(silent = false) {
                 <td>${b.fileCount || 0}${b.totalSize ? ` <small>(${(b.totalSize / 1048576).toFixed(1)} MB)</small>` : ''}</td>
                 <td>${esc((b.buildId || '').substring(0, 8))}…</td>
                 <td>
-                    <button class="btn btn-sm" onclick="viewBuild('${esc(b.buildId)}')">Manifest</button>
-                    <button class="btn btn-sm" onclick="viewBuildLogs(${b.id}, '${esc(b.name)}')">Logs</button>
-                    ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteBuild(${b.id})">Delete</button>` : (busy ? '<small class="muted">in progress</small>' : '')}
+                    ${canEdit ? `<button class="btn btn-sm btn-primary" data-action="open-build-editor" data-id="${b.id}">Edit</button>` : ''}
+                    <button class="btn btn-sm" data-action="view-build" data-build-id="${esc(b.buildId)}">Manifest</button>
+                    <button class="btn btn-sm" data-action="view-logs" data-id="${b.id}" data-name="${esc(b.name)}">Logs</button>
+                    ${canDelete ? `<button class="btn btn-sm btn-danger" data-action="delete-build" data-id="${b.id}">Delete</button>` : (busy ? '<small class="muted">in progress</small>' : '')}
                 </td>
             </tr>`;
         }).join('');
@@ -1139,6 +1209,24 @@ async function loadBuilds(silent = false) {
             toast('error', 'Failed to load builds: ' + e.message);
         }
     }
+}
+
+function updateBuildsPager(data) {
+    const info = document.getElementById('builds-page-info');
+    const prev = document.getElementById('builds-prev');
+    const next = document.getElementById('builds-next');
+    if (!info || !prev || !next) return;
+
+    const page = (data && data.page) || buildsPage;
+    const totalPages = (data && data.totalPages) || 0;
+    const totalCount = (data && data.totalCount) || 0;
+
+    info.textContent = totalCount === 0
+        ? 'No builds'
+        : `Page ${page} / ${Math.max(totalPages, 1)} · ${totalCount} total`;
+
+    prev.disabled = page <= 1;
+    next.disabled = totalPages === 0 || page >= totalPages;
 }
 
 // Live download / install progress: percent bar + bytes + speed + current step/file.
@@ -1175,7 +1263,10 @@ function stopBuildsRefresh() {
     }
 }
 
-async function viewBuild(buildId) {
+async function viewBuild(el) {
+    const buildId = el && el.dataset ? el.dataset.buildId : '';
+    if (!buildId) return;
+
     try {
         const manifest = await api(`/builds/${buildId}/manifest`);
         if (!manifest) {
@@ -1189,7 +1280,7 @@ async function viewBuild(buildId) {
             <p><strong>Files:</strong> ${(manifest.files || []).length}</p>
             <pre class="json-view">${esc(JSON.stringify(manifest, null, 2))}</pre>
             <div class="btn-group">
-                <button class="btn" onclick="closeModal()">Close</button>
+                <button class="btn" data-action="close-modal">Close</button>
             </div>
         `);
     } catch (e) {
@@ -1202,7 +1293,702 @@ async function deleteBuild(id) {
     try {
         await api(`/builds/${id}`, { method: 'DELETE' });
         toast('success', 'Build deleted.');
-        await loadBuilds();
+        await loadBuilds(false, true);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+// ---------- build editor ----------
+
+async function openBuildEditor(id) {
+    try {
+        const [data, presets, directory] = await Promise.all([
+            api(`/admin/builds/${id}/editor`),
+            api('/admin/presets').catch(() => []),
+            api(`/admin/builds/${id}/files?path=`)
+        ]);
+
+        editorBuild = data;
+        editorBuild.fileCount = directory.totalFileCount ?? data.fileCount;
+        editorBuild.totalSize = directory.totalSize ?? data.totalSize;
+        editorPresets = Array.isArray(presets) ? presets : [];
+        editorCurrentPath = directory.path || '';
+        editorBreadcrumbs = directory.breadcrumbs || [];
+        editorDirectories = directory.directories || [];
+        editorFiles = directory.files || [];
+        editorSelectedPath = null;
+        editorFileContent = null;
+        editorDirty = false;
+        editorTab = 'files';
+        editorSearch = '';
+
+        renderBuildEditor();
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+function description(value) {
+    return value === null || value === undefined ? '' : String(value);
+}
+
+function renderBuildEditor() {
+    if (!editorBuild) return;
+    closeEditorRowMenu();
+    document.getElementById('modal-body').innerHTML = buildEditorShell();
+    const modal = document.getElementById('modal');
+    modal.classList.add('active', 'wide', 'editor');
+
+    if (editorTab === 'files' && editorSelectedPath) {
+        renderEditorFilePane();
+    } else if (editorTab === 'manifest') {
+        loadEditorManifest();
+    }
+}
+
+function buildEditorShell() {
+    const b = editorBuild;
+    const tabs = [
+        ['settings', 'Settings'],
+        ['files', `Files <span class="muted">${editorBuild.fileCount || 0}</span>`],
+        ['manifest', 'Manifest']
+    ];
+
+    return `
+        <div class="editor-head">
+            <div>
+                <h3>${esc(b.name)} <span class="status status-${esc(b.status)}">${esc(b.status)}</span></h3>
+                <p class="muted">${esc(b.mcVersion)} · ${esc(b.loaderType)}${b.loaderVersion ? ' ' + esc(b.loaderVersion) : ''} · build ${esc(description(b.buildKey).substring(0, 8))}…</p>
+            </div>
+            <button class="btn btn-sm" data-action="close-modal">Close</button>
+        </div>
+        <div class="editor-tabs">
+            ${tabs.map(([id, label]) =>
+                `<button class="editor-tab ${editorTab === id ? 'active' : ''}" data-action="editor-tab" data-tab="${id}">${label}</button>`
+            ).join('')}
+        </div>
+        <div class="editor-body">
+            ${editorTab === 'settings' ? buildSettingsTab()
+                : editorTab === 'files' ? buildFilesTab()
+                : buildManifestTab()}
+        </div>`;
+}
+
+function buildSettingsTab() {
+    const b = editorBuild;
+    const mc = description(b.mcVersion).toLowerCase();
+    const loader = description(b.loaderType).toLowerCase();
+    const matchingPresets = (editorPresets || []).filter(p =>
+        description(p.gameVersion).toLowerCase() === mc &&
+        description(p.loaderType).toLowerCase() === loader);
+
+    const presetOptions = ['<option value="">No preset</option>']
+        .concat(matchingPresets.map(p =>
+            `<option value="${p.id}" ${String(p.id) === String(b.buildPresetId) ? 'selected' : ''}>${esc(p.name)}</option>`))
+        .join('');
+
+    return `
+        <div class="editor-settings">
+            <h4>Build settings</h4>
+            <div class="editor-form-grid">
+                <label>Name
+                    <input id="editor-name" type="text" maxlength="100" value="${esc(b.name)}">
+                </label>
+                <label>Status
+                    <input type="text" value="${esc(b.status)}" disabled>
+                </label>
+                <label>Minecraft version
+                    <input type="text" value="${esc(b.mcVersion)}" disabled>
+                </label>
+                <label>Loader
+                    <input type="text" value="${esc(b.loaderType)}" disabled>
+                </label>
+                <label>Loader version
+                    <input id="editor-loader-version" type="text" maxlength="100" value="${esc(b.loaderVersion || '')}">
+                </label>
+                <label>Preset
+                    <select id="editor-preset">${presetOptions}</select>
+                </label>
+            </div>
+            <p class="hint">Minecraft version and loader are fixed for an existing build. Saving updates the build row and the display name in the client manifest.</p>
+            <div class="editor-actions">
+                <button class="btn btn-primary" data-action="editor-save-settings">Save settings</button>
+            </div>
+        </div>`;
+}
+
+function buildFilesTab() {
+    return editorSelectedPath ? buildFileEditorView() : buildDirectoryView();
+}
+
+function buildDirectoryView() {
+    return `
+        <div class="editor-directory-view">
+            <div class="file-breadcrumbs" id="editor-breadcrumbs">
+                ${buildBreadcrumbs()}
+            </div>
+            <div class="editor-toolbar file-toolbar">
+                <input id="editor-file-search" type="text" placeholder="Filter this folder..." value="${esc(editorSearch)}">
+                <button class="btn btn-sm" data-action="editor-new-directory">Create Directory</button>
+                <button class="btn btn-sm btn-primary" data-action="editor-upload">Upload</button>
+                <button class="btn btn-sm" data-action="editor-new-file">New File</button>
+                <input type="file" id="editor-upload-input" multiple hidden>
+            </div>
+            <div id="editor-new-dir-row" class="editor-new-row" hidden>
+                <input id="editor-new-dir-name" type="text" placeholder="folder name or nested/folder">
+                <button class="btn btn-sm btn-primary" data-action="editor-create-directory">Create directory</button>
+            </div>
+            <div id="editor-new-file-row" class="editor-new-row" hidden>
+                <input id="editor-new-file-name" type="text" placeholder="file.txt or nested/file.txt">
+                <button class="btn btn-sm btn-primary" data-action="editor-create-file">Create file</button>
+            </div>
+            <div class="file-table-card">
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Size</th>
+                            <th>Modified</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="editor-dir-rows">${buildDirectoryRows()}</tbody>
+                </table>
+            </div>
+        </div>`;
+}
+
+function buildBreadcrumbs() {
+    const crumbs = editorBreadcrumbs.length
+        ? editorBreadcrumbs
+        : [{ name: '/', path: '' }];
+
+    return crumbs.map((crumb, index) => {
+        const isLast = index === crumbs.length - 1;
+        const label = isLast
+            ? `<span class="crumb-current">${esc(crumb.name)}</span>`
+            : `<button class="crumb-link" data-action="editor-dir" data-path="${esc(crumb.path)}">${esc(crumb.name)}</button>`;
+
+        // The root crumb is already "/", so do not add another slash before the first segment.
+        return `${index > 1 ? '<span class="crumb-sep">/</span>' : ''}${label}`;
+    }).join('');
+}
+
+function buildDirectoryRows() {
+    const term = (editorSearch || '').trim().toLowerCase();
+    const directories = editorDirectories.filter(d => !term || d.name.toLowerCase().includes(term));
+    const files = editorFiles.filter(f => !term || description(f.name).toLowerCase().includes(term));
+
+    if (!directories.length && !files.length) {
+        return `<tr><td colspan="4" class="file-empty">${term ? 'Nothing matches this filter.' : 'This folder is empty.'}</td></tr>`;
+    }
+
+    return directories.map(d => `
+        <tr>
+            <td class="file-name-cell">
+                <div class="file-name-inner">
+                    ${fileIcon(true)}
+                    <button class="file-name-link" data-action="editor-dir" data-path="${esc(d.path)}">${esc(d.name)}</button>
+                </div>
+            </td>
+            <td class="file-size-cell">—</td>
+            <td class="file-modified-cell">${fmtTimestamp(d.modifiedAt)}</td>
+            <td class="file-actions-cell">
+                ${rowMenu('dir', d.path)}
+            </td>
+        </tr>`).join('') +
+        files.map(f => `
+        <tr>
+            <td class="file-name-cell">
+                <div class="file-name-inner">
+                    ${fileIcon(false)}
+                    <button class="file-name-link" data-action="editor-open-file" data-path="${esc(f.path)}">${esc(f.name)}</button>
+                </div>
+            </td>
+            <td class="file-size-cell">${fmtBytes(f.size)}</td>
+            <td class="file-modified-cell">${fmtTimestamp(f.modifiedAt)}</td>
+            <td class="file-actions-cell">
+                ${rowMenu('file', f.path)}
+            </td>
+        </tr>`).join('');
+}
+
+function fileIcon(isDirectory) {
+    return isDirectory
+        ? '<svg class="file-ico folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
+        : '<svg class="file-ico" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5"/></svg>';
+}
+
+function rowMenu(kind, path) {
+    return `<button class="row-menu-btn" data-action="editor-row-menu" data-kind="${kind}" data-path="${esc(path)}" aria-label="File actions">…</button>`;
+}
+
+function showEditorRowMenu(button) {
+    closeEditorRowMenu();
+
+    const kind = button.dataset.kind;
+    const path = button.dataset.path;
+    const items = kind === 'dir'
+        ? [['editor-dir', 'Open', false], ['editor-delete-dir', 'Delete', true]]
+        : [
+            ['editor-open-file', 'Edit', false],
+            ['editor-download', 'Download', false],
+            ['editor-rename', 'Rename', false],
+            ['editor-delete', 'Delete', true]
+        ];
+
+    const menu = document.createElement('div');
+    menu.id = 'editor-row-menu';
+    menu.className = 'row-menu-popup';
+    menu.innerHTML = items.map(([action, label, danger]) =>
+        `<button class="${danger ? 'danger' : ''}" data-action="${action}" data-path="${esc(path)}">${esc(label)}</button>`
+    ).join('');
+
+    document.body.appendChild(menu);
+
+    const rect = button.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const top = Math.min(rect.bottom + 4, window.innerHeight - menuRect.height - 8);
+    const left = Math.max(8, rect.right - menuRect.width);
+
+    menu.style.top = `${Math.max(8, top)}px`;
+    menu.style.left = `${left}px`;
+}
+
+function closeEditorRowMenu() {
+    document.getElementById('editor-row-menu')?.remove();
+}
+
+function buildFileEditorView() {
+    return `
+        <div class="editor-file-view">
+            <div class="editor-toolbar file-toolbar">
+                <button class="btn btn-sm" data-action="editor-back">← Back</button>
+                <span class="muted">${esc(editorCurrentPath || '/')}</span>
+            </div>
+            <section id="editor-file-pane" class="editor-file-pane"></section>
+        </div>`;
+}
+
+function renderDirectoryRows() {
+    const host = document.getElementById('editor-dir-rows');
+    if (host) host.innerHTML = buildDirectoryRows();
+}
+
+function renderEditorFilePane() {
+    const host = document.getElementById('editor-file-pane');
+    if (!host) return;
+
+    if (!editorSelectedPath) {
+        host.innerHTML = '<div class="editor-empty">Select a file to view or edit it.</div>';
+        return;
+    }
+
+    const file = editorFiles.find(f => f.path === editorSelectedPath);
+    if (!file) {
+        host.innerHTML = '<div class="editor-empty">This file is no longer in the build.</div>';
+        return;
+    }
+
+    const path = esc(file.path);
+    const head = `
+        <h4>${esc(file.name || file.path)}</h4>
+        <p class="muted">${fmtBytes(file.size)} · ${esc(file.policy)} · sha256 ${esc(description(file.sha256).substring(0, 12))}…</p>
+        <div class="editor-file-actions">
+            <button class="btn btn-sm" data-action="editor-download" data-path="${path}">Download</button>
+            <button class="btn btn-sm" data-action="editor-rename" data-path="${path}">Rename</button>
+            <button class="btn btn-sm btn-danger" data-action="editor-delete" data-path="${path}">Delete</button>
+        </div>`;
+
+    if (!file.editable) {
+        host.innerHTML = head +
+            '<div class="editor-binary">This is a binary file. Download it, edit it locally, then upload the replacement.</div>';
+        return;
+    }
+
+    if (!editorFileContent) {
+        host.innerHTML = head + '<div class="editor-empty">Loading file…</div>';
+        return;
+    }
+
+    if (editorFileContent.isBinary) {
+        host.innerHTML = head +
+            '<div class="editor-binary">The file is not valid UTF-8 text. Download it and edit it locally.</div>';
+        return;
+    }
+
+    host.innerHTML = head + `
+        <textarea id="editor-textarea" class="editor-textarea" spellcheck="false">${esc(editorFileContent.content)}</textarea>
+        <div class="editor-actions">
+            <button class="btn btn-primary" data-action="editor-save-file">Save file</button>
+            <span id="editor-dirty" class="editor-dirty">${editorDirty ? 'Unsaved changes' : ''}</span>
+        </div>`;
+}
+
+async function navigateEditorDirectory(path) {
+    if (editorDirty && !confirm('Discard unsaved changes?')) return;
+    await loadEditorDirectory(path);
+}
+
+async function loadEditorDirectory(path) {
+    try {
+        const dir = await api(
+            `/admin/builds/${editorBuild.id}/files?path=${encodeURIComponent(path || '')}`);
+
+        editorCurrentPath = dir.path || '';
+        editorBreadcrumbs = dir.breadcrumbs || [];
+        editorDirectories = dir.directories || [];
+        editorFiles = dir.files || [];
+        if (typeof dir.totalFileCount === 'number') editorBuild.fileCount = dir.totalFileCount;
+        if (typeof dir.totalSize === 'number') editorBuild.totalSize = dir.totalSize;
+        editorSelectedPath = null;
+        editorFileContent = null;
+        editorDirty = false;
+        editorSearch = '';
+        renderBuildEditor();
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function selectEditorFile(path) {
+    if (path === editorSelectedPath) return;
+    if (editorDirty && !confirm('Discard unsaved changes?')) return;
+
+    editorSelectedPath = path;
+    editorDirty = false;
+    editorFileContent = null;
+    renderBuildEditor();
+
+    const file = editorFiles.find(f => f.path === path);
+    if (file && file.editable) {
+        await loadEditorFileContent(path);
+    }
+}
+
+async function loadEditorFileContent(path) {
+    try {
+        const content = await api(
+            `/admin/builds/${editorBuild.id}/files/content?path=${encodeURIComponent(path)}`);
+        if (editorSelectedPath !== path) return;
+        editorFileContent = content;
+        renderEditorFilePane();
+    } catch (e) {
+        if (editorSelectedPath === path) {
+            editorFileContent = { isBinary: true, content: '' };
+            renderEditorFilePane();
+        }
+        toast('error', e.message);
+    }
+}
+
+async function saveEditorFile() {
+    const area = document.getElementById('editor-textarea');
+    if (!area || !editorSelectedPath) return;
+
+    const button = document.querySelector('[data-action="editor-save-file"]');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Saving…';
+    }
+
+    try {
+        const file = await api(`/admin/builds/${editorBuild.id}/files/content`, {
+            method: 'PUT',
+            body: JSON.stringify({ path: editorSelectedPath, content: area.value })
+        });
+
+        file.name = file.name || description(editorSelectedPath).split('/').pop();
+        editorFileContent = {
+            ...editorFileContent,
+            content: area.value,
+            size: file.size,
+            sha256: file.sha256,
+            policy: file.policy,
+            isBinary: false
+        };
+        editorDirty = false;
+        updateEditorFile(file);
+        renderEditorFilePane();
+        toast('success', 'File saved and the client manifest updated.');
+    } catch (e) {
+        toast('error', e.message);
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Save file';
+        }
+    }
+}
+
+function updateEditorFile(file) {
+    const index = editorFiles.findIndex(f => f.path === file.path);
+    if (index >= 0) {
+        editorFiles[index] = file;
+    } else {
+        editorFiles.push(file);
+    }
+
+    editorFiles.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function deleteEditorFile(path = editorSelectedPath) {
+    if (!path) return;
+    if (!confirm(`Delete ${path}?`)) return;
+
+    try {
+        await api(`/admin/builds/${editorBuild.id}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+        editorSelectedPath = null;
+        editorFileContent = null;
+        editorDirty = false;
+        await loadEditorDirectory(editorCurrentPath);
+        toast('success', 'File deleted and the client manifest updated.');
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function renameEditorFile(path = editorSelectedPath) {
+    if (!path) return;
+
+    const from = path;
+    const to = prompt('New path', from);
+    if (!to || to === from) return;
+
+    const wasEditing = Boolean(editorSelectedPath);
+
+    try {
+        const file = await api(`/admin/builds/${editorBuild.id}/files/rename`, {
+            method: 'POST',
+            body: JSON.stringify({ from, to })
+        });
+
+        const parent = file.path.includes('/')
+            ? file.path.slice(0, file.path.lastIndexOf('/'))
+            : '';
+
+        await loadEditorDirectory(parent);
+        if (wasEditing) await selectEditorFile(file.path);
+        toast('success', 'File renamed and the client manifest updated.');
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function downloadEditorFile(path = editorSelectedPath) {
+    if (!path) return;
+
+    try {
+        const res = await fetch(
+            `${API_BASE}/admin/builds/${editorBuild.id}/files/download?path=${encodeURIComponent(path)}`,
+            { headers: { 'Authorization': `Bearer ${token}` } });
+
+        if (res.status === 401) {
+            logout();
+            throw new Error('Session expired, please sign in again');
+        }
+
+        if (!res.ok) {
+            let message = `HTTP ${res.status}`;
+            try {
+                const body = await res.json();
+                message = body.message || body.error || message;
+            } catch (e) {
+                // Keep the status fallback.
+            }
+            throw new Error(friendlyError(message));
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = path.split('/').pop() || 'file';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function uploadEditorFiles(files) {
+    if (!files || !files.length || !editorBuild) return;
+
+    let uploaded = 0;
+
+    for (const file of Array.from(files)) {
+        try {
+            const target = editorCurrentPath
+                ? `${editorCurrentPath}/${file.name}`
+                : file.name;
+
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('path', target);
+
+            await api(`/admin/builds/${editorBuild.id}/files`, { method: 'POST', body: fd });
+            uploaded++;
+        } catch (e) {
+            toast('error', `${file.name}: ${e.message}`);
+        }
+    }
+
+    const input = document.getElementById('editor-upload-input');
+    if (input) input.value = '';
+
+    if (uploaded) {
+        await loadEditorDirectory(editorCurrentPath);
+        toast('success', `Uploaded ${uploaded} file(s).`);
+    }
+}
+
+function createEditorFile() {
+    const row = document.getElementById('editor-new-file-row');
+    if (row) row.removeAttribute('hidden');
+    document.getElementById('editor-new-file-name')?.focus();
+}
+
+async function createEditorFileConfirm() {
+    const name = val('editor-new-file-name');
+    if (!name) {
+        toast('error', 'Enter a file name.');
+        return;
+    }
+
+    const path = editorCurrentPath ? `${editorCurrentPath}/${name}` : name;
+
+    try {
+        const file = await api(`/admin/builds/${editorBuild.id}/files/content`, {
+            method: 'PUT',
+            body: JSON.stringify({ path, content: '' })
+        });
+
+        document.getElementById('editor-new-file-name').value = '';
+        document.getElementById('editor-new-file-row')?.setAttribute('hidden', 'hidden');
+
+        const parent = file.path.includes('/')
+            ? file.path.slice(0, file.path.lastIndexOf('/'))
+            : '';
+
+        await loadEditorDirectory(parent);
+        await selectEditorFile(file.path);
+        toast('success', 'File created.');
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+function createEditorDirectoryPrompt() {
+    const row = document.getElementById('editor-new-dir-row');
+    if (row) row.removeAttribute('hidden');
+    document.getElementById('editor-new-dir-name')?.focus();
+}
+
+async function createEditorDirectory() {
+    const name = val('editor-new-dir-name');
+    if (!name) {
+        toast('error', 'Enter a directory name.');
+        return;
+    }
+
+    const path = editorCurrentPath ? `${editorCurrentPath}/${name}` : name;
+
+    try {
+        await api(`/admin/builds/${editorBuild.id}/directories`, {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        });
+
+        document.getElementById('editor-new-dir-name').value = '';
+        document.getElementById('editor-new-dir-row')?.setAttribute('hidden', 'hidden');
+        await loadEditorDirectory(editorCurrentPath);
+        toast('success', 'Directory created.');
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function deleteEditorDirectory(path) {
+    if (!path) return;
+    if (!confirm(`Delete directory ${path} and all files inside it?`)) return;
+
+    try {
+        await api(`/admin/builds/${editorBuild.id}/directories?path=${encodeURIComponent(path)}`, {
+            method: 'DELETE'
+        });
+        await loadEditorDirectory(editorCurrentPath);
+        toast('success', 'Directory deleted and the client manifest updated.');
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+async function saveEditorSettings() {
+    const name = val('editor-name');
+    if (!name) {
+        toast('error', 'Build name cannot be empty.');
+        return;
+    }
+
+    const preset = val('editor-preset');
+    const body = {
+        name,
+        loaderVersion: val('editor-loader-version') || null,
+        buildPresetId: preset ? Number(preset) : null
+    };
+
+    try {
+        const result = await api(`/admin/builds/${editorBuild.id}/settings`, {
+            method: 'PUT',
+            body: JSON.stringify(body)
+        });
+
+        editorBuild.name = result.name;
+        editorBuild.loaderVersion = result.loaderVersion;
+        editorBuild.buildPresetId = result.buildPresetId;
+        renderBuildEditor();
+        toast('success', 'Build settings saved.');
+        loadBuilds(true);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+function switchEditorTab(tab) {
+    if (tab === editorTab) return;
+    if (editorDirty && !confirm('Discard unsaved changes?')) return;
+
+    editorDirty = false;
+    editorTab = tab;
+    renderBuildEditor();
+}
+
+async function loadEditorManifest() {
+    const host = document.getElementById('editor-manifest-view');
+    if (!host) return;
+
+    host.textContent = 'Loading…';
+    try {
+        const manifest = await api(`/admin/builds/${editorBuild.id}/manifest`);
+        host.textContent = JSON.stringify(manifest, null, 2);
+    } catch (e) {
+        host.textContent = 'Failed to load manifest: ' + e.message;
+    }
+}
+
+async function downloadEditorManifest() {
+    try {
+        const manifest = await api(`/admin/builds/${editorBuild.id}/manifest`);
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${editorBuild.buildKey || 'build'}-manifest.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
         toast('error', e.message);
     }
@@ -1212,13 +1998,17 @@ async function deleteBuild(id) {
 
 // Opens a modal that streams the build's processing log; new lines are polled every
 // two seconds while the modal is open, so an in-flight build's log stays live.
-function viewBuildLogs(id, name) {
+function viewBuildLogs(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const name = el && el.dataset ? (el.dataset.name || '') : '';
+    if (!id) return;
+
     stopBuildLogRefresh();
     showModal(`
         <h3>Build Logs: ${esc(name)}</h3>
         <div id="build-log-view" class="log-view"><div class="muted">Loading…</div></div>
         <div class="btn-group">
-            <button class="btn" onclick="closeModal()">Close</button>
+            <button class="btn" data-action="close-modal">Close</button>
         </div>
     `);
 
@@ -1309,10 +2099,10 @@ async function loadUsers() {
                 <td>${u.lastLogin ? fmtDate(u.lastLogin) : 'Never'}</td>
                 <td>
                     ${banned
-                        ? `<button class="btn btn-sm" onclick="unbanUser(${u.id})">Unban</button>`
-                        : `<button class="btn btn-sm btn-danger" onclick="banUser(${u.id})">Ban</button>`}
-                    <button class="btn btn-sm" onclick="changeRole(${u.id}, '${esc(u.role)}')">Role</button>
-                    <button class="btn btn-sm" onclick="changePassword(${u.id}, '${esc(u.username)}')">Password</button>
+                        ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
+                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`}
+                    <button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>
+                    <button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>
                 </td>
             </tr>`;
         }).join('');
@@ -1340,13 +2130,32 @@ function showModal(html) {
     document.getElementById('modal-body').innerHTML = html;
     // Dialogs with tables or raw JSON (manifest, preset mods, Modrinth search) need room.
     const wide = /<(table|pre)\b|class="[^"]*\blog-view\b/.test(html);
-    document.getElementById('modal').classList.toggle('wide', wide);
-    document.getElementById('modal').classList.add('active');
+    const modal = document.getElementById('modal');
+    closeEditorRowMenu();
+    modal.classList.toggle('wide', wide);
+    modal.classList.remove('editor');
+    modal.classList.add('active');
 }
 
 function closeModal() {
+    const modal = document.getElementById('modal');
+    if (modal.classList.contains('editor') && editorDirty &&
+        !confirm('Discard unsaved changes?')) {
+        return;
+    }
+
     stopBuildLogRefresh();
-    document.getElementById('modal').classList.remove('active');
+    closeEditorRowMenu();
+    modal.classList.remove('active', 'editor');
+    editorDirty = false;
+    editorBuild = null;
+    editorFiles = [];
+    editorDirectories = [];
+    editorBreadcrumbs = [];
+    editorCurrentPath = '';
+    editorSelectedPath = null;
+    editorFileContent = null;
+    editorSearch = '';
 }
 
 document.querySelector('.close').addEventListener('click', closeModal);
@@ -1368,8 +2177,8 @@ function banUser(id) {
             <input type="number" id="ban-duration" placeholder="Permanent">
         </div>
         <div class="btn-group">
-            <button class="btn btn-danger" onclick="confirmBan(${id})">Ban</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-danger" data-action="confirm-ban" data-id="${id}">Ban</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
 }
@@ -1401,7 +2210,11 @@ async function unbanUser(id) {
     }
 }
 
-function changeRole(id, currentRole) {
+function changeRole(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const currentRole = el && el.dataset ? (el.dataset.role || 'user') : 'user';
+    if (!id) return;
+
     showModal(`
         <h3>Change Role - User ${id}</h3>
         <div class="form-group">
@@ -1412,8 +2225,8 @@ function changeRole(id, currentRole) {
             </select>
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" onclick="confirmRole(${id})">Change</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" data-action="confirm-role" data-id="${id}">Change</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
 }
@@ -1433,16 +2246,20 @@ async function confirmRole(id) {
     }
 }
 
-function changePassword(id, username) {
+function changePassword(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const username = el && el.dataset ? (el.dataset.username || '') : '';
+    if (!id) return;
+
     showModal(`
         <h3>Reset password - ${esc(username || id)}</h3>
         <div class="form-group">
-            <label>New password (min 6 characters)</label>
+            <label>New password (8–72 characters)</label>
             <input type="text" id="new-password" placeholder="New password">
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" onclick="confirmPassword(${id})">Save</button>
-            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" data-action="confirm-password" data-id="${id}">Save</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
 }
@@ -1450,8 +2267,8 @@ function changePassword(id, username) {
 async function confirmPassword(id) {
     try {
         const password = val('new-password');
-        if (!password || password.length < 6) {
-            toast('error', 'Password must be at least 6 characters.');
+        if (!password || password.length < 8 || new TextEncoder().encode(password).length > 72) {
+            toast('error', 'Password must be 8–72 bytes (UTF-8).');
             return;
         }
         await api(`/admin/users/${id}/change-password`, {
@@ -1513,6 +2330,123 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 });
 
 document.getElementById('logout-btn').addEventListener('click', logout);
+
+// Delegated handlers for table actions. Values travel through data-* attributes instead of
+// being interpolated into inline JavaScript, which removes the XSS vector from user-controlled
+// names/usernames/slugs.
+document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : event.target.parentElement;
+    const button = target ? target.closest('[data-action]') : null;
+    if (!button) return;
+
+    // Close any open row menu before running its action (but keep it when opening a new one).
+    if (button.dataset.action !== 'editor-row-menu') {
+        closeEditorRowMenu();
+    }
+
+    switch (button.dataset.action) {
+        case 'editor-row-menu': showEditorRowMenu(button); break;
+        case 'edit-server': editServer(Number(button.dataset.id)); break;
+        case 'delete-server': deleteServer(Number(button.dataset.id)); break;
+        case 'edit-preset': editPreset(Number(button.dataset.id)); break;
+        case 'manage-preset-mods': managePresetMods(Number(button.dataset.id)); break;
+        case 'delete-preset': deletePreset(Number(button.dataset.id)); break;
+        case 'save-preset': savePreset(Number(button.dataset.id)); break;
+        case 'search-modrinth': searchModrinth(Number(button.dataset.id)); break;
+        case 'upload-custom-mod': uploadCustomMod(Number(button.dataset.id)); break;
+        case 'create-preset': createPreset(); break;
+        case 'save-server': saveServer(button.dataset.id ? Number(button.dataset.id) : undefined); break;
+        case 'save-build': saveBuild(); break;
+        case 'import-modpack-modrinth': importModpackFromModrinth(); break;
+        case 'import-modpack-file': importModpackFromFile(); break;
+        case 'delete-build': deleteBuild(Number(button.dataset.id)); break;
+        case 'open-build-editor': openBuildEditor(Number(button.dataset.id)); break;
+        case 'editor-tab': switchEditorTab(button.dataset.tab); break;
+        case 'editor-open-file': selectEditorFile(button.dataset.path); break;
+        case 'editor-dir': navigateEditorDirectory(button.dataset.path || ''); break;
+        case 'editor-back': navigateEditorDirectory(editorCurrentPath); break;
+        case 'editor-save-file': saveEditorFile(); break;
+        case 'editor-download': downloadEditorFile(button.dataset.path || editorSelectedPath); break;
+        case 'editor-delete': deleteEditorFile(button.dataset.path || editorSelectedPath); break;
+        case 'editor-rename': renameEditorFile(button.dataset.path || editorSelectedPath); break;
+        case 'editor-delete-dir': deleteEditorDirectory(button.dataset.path); break;
+        case 'editor-upload': document.getElementById('editor-upload-input')?.click(); break;
+        case 'editor-new-file': createEditorFile(); break;
+        case 'editor-create-file': createEditorFileConfirm(); break;
+        case 'editor-new-directory': createEditorDirectoryPrompt(); break;
+        case 'editor-create-directory': createEditorDirectory(); break;
+        case 'editor-save-settings': saveEditorSettings(); break;
+        case 'editor-refresh-manifest': loadEditorManifest(); break;
+        case 'editor-download-manifest': downloadEditorManifest(); break;
+        case 'unban-user': unbanUser(Number(button.dataset.id)); break;
+        case 'ban-user': banUser(Number(button.dataset.id)); break;
+        case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
+        case 'confirm-role': confirmRole(Number(button.dataset.id)); break;
+        case 'confirm-password': confirmPassword(Number(button.dataset.id)); break;
+        case 'close-modal': closeModal(); break;
+        case 'view-build': viewBuild(button); break;
+        case 'view-logs': viewBuildLogs(button); break;
+        case 'change-role': changeRole(button); break;
+        case 'change-password': changePassword(button); break;
+        case 'toggle-mod': togglePresetMod(button); break;
+        case 'delete-mod': deletePresetMod(button); break;
+        case 'add-modrinth-mod': addModrinthMod(button); break;
+    }
+});
+
+document.getElementById('builds-prev')?.addEventListener('click', () => {
+    if (buildsPage > 1) {
+        buildsPage--;
+        loadBuilds();
+    }
+});
+
+document.getElementById('builds-next')?.addEventListener('click', () => {
+    if (buildsTotalPages > 0 && buildsPage < buildsTotalPages) {
+        buildsPage++;
+        loadBuilds();
+    }
+});
+
+document.getElementById('builds-status-filter')?.addEventListener('change', (e) => {
+    buildsStatus = e.target.value || '';
+    buildsPage = 1;
+    loadBuilds();
+});
+
+// Build editor: live search and dirty tracking. The file list is re-rendered on every
+// keystroke, but only the first 500 matches are inserted to keep huge builds responsive.
+document.addEventListener('input', (e) => {
+    if (e.target.id === 'editor-file-search') {
+        editorSearch = e.target.value || '';
+        renderDirectoryRows();
+    }
+
+    if (e.target.id === 'editor-textarea') {
+        editorDirty = true;
+        const dirty = document.getElementById('editor-dirty');
+        if (dirty) dirty.textContent = 'Unsaved changes';
+    }
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target.id === 'editor-upload-input') {
+        uploadEditorFiles(e.target.files);
+    }
+});
+
+// The row action menu is fixed-positioned to avoid being clipped by the file table.
+document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    if (target.closest('#editor-row-menu') ||
+        target.closest('[data-action="editor-row-menu"]')) {
+        return;
+    }
+
+    closeEditorRowMenu();
+}, true);
 
 // ---------- init ----------
 

@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnderMineApi", "UnderMineAp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManifestGenerator", "ManifestGenerator\ManifestGenerator.csproj", "{CE23C5EF-044F-4A21-AB3A-5469DC35C421}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnderMineApi.Tests", "UnderMineApi.Tests\UnderMineApi.Tests.csproj", "{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -41,6 +43,18 @@ Global
 		{CE23C5EF-044F-4A21-AB3A-5469DC35C421}.Release|x64.Build.0 = Release|Any CPU
 		{CE23C5EF-044F-4A21-AB3A-5469DC35C421}.Release|x86.ActiveCfg = Release|Any CPU
 		{CE23C5EF-044F-4A21-AB3A-5469DC35C421}.Release|x86.Build.0 = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|x64.Build.0 = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Debug|x86.Build.0 = Debug|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|x64.ActiveCfg = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|x64.Build.0 = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|x86.ActiveCfg = Release|Any CPU
+		{DD2E365F-82F8-4B18-93CB-C4DCEC3436EC}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

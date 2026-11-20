@@ -1,0 +1,81 @@
+---
+- name: Require real database passwords
+  ansible.builtin.assert:
+    that:
+      - vault_app_pass is defined and vault_app_pass | length >= 16
+      - vault_repl_pass is defined and vault_repl_pass | length >= 16
+      - vault_app_pass != 'CHANGE_ME_LONG_RANDOM'
+      - vault_repl_pass != 'CHANGE_ME_LONG_RANDOM'
+    fail_msg: >-
+      Set vault_app_pass and vault_repl_pass in HashiCorp Vault
+      (secret/undermine-api/database by default).
+      Generate them with `openssl rand -base64 32`.
+
+- name: Install PostgreSQL and Ansible dependencies
+  ansible.builtin.apt:
+    name: "{{ required_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure en_US.UTF-8 locale is present
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+# Only the primary gets the /srv data directory move. The standby is
+# re-initialized by pg_basebackup; the DR only needs the binaries for restore.
+- name: Prepare the primary data directory
+  when: inventory_hostname in groups['prod_primary']
+  block:
+    - name: Ensure the new data directory exists
+      ansible.builtin.file:
+        path: "{{ pg_new_data }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0700'
+
+    - name: Check whether the new data directory is empty
+      ansible.builtin.find:
+        paths: "{{ pg_new_data }}"
+        file_type: any
+      register: new_data_dir
+
+    - name: Stop PostgreSQL before migrating the data directory
+      ansible.builtin.systemd:
+        name: "postgresql@{{ pg_version }}-main"
+        state: stopped
+      when: new_data_dir.matched == 0
+
+    - name: Move the cluster data to /srv
+      ansible.posix.synchronize:
+        src: "{{ pg_old_data }}/"
+        dest: "{{ pg_new_data }}/"
+        archive: true
+        delete: true
+      delegate_to: "{{ inventory_hostname }}"
+      when: new_data_dir.matched == 0
+
+    - name: Point data_directory at the new location
+      ansible.builtin.lineinfile:
+        path: "{{ pg_config_dir }}/postgresql.conf"
+        regexp: "^#?data_directory = "
+        line: "data_directory = '{{ pg_new_data }}'"
+        state: present
+      notify: Restart PostgreSQL
+
+# Staging uses 5433. The main cluster must stay on 5432 on the primary and
+# standby. The DR has no managed cluster, so skip it there.
+- name: Ensure the main cluster uses port 5432
+  ansible.builtin.lineinfile:
+    path: "{{ pg_config_dir }}/postgresql.conf"
+    regexp: "^port = "
+    line: "port = 5432"
+  notify: Restart PostgreSQL
+  when: >-
+    inventory_hostname in groups['prod_primary']
+    or inventory_hostname in groups['prod_standby']
+
+- name: Apply PostgreSQL configuration before replica/staging
+  ansible.builtin.meta: flush_handlers

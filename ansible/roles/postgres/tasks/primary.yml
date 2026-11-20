@@ -1,0 +1,72 @@
+---
+- name: Configure postgresql.conf for replication
+  ansible.builtin.blockinfile:
+    path: "{{ pg_config_dir }}/postgresql.conf"
+    marker: "# {mark} ANSIBLE MANAGED REPLICATION BLOCK"
+    block: |
+      # The API runs with network_mode: host, so it reaches PostgreSQL on loopback.
+      # Replication also arrives through an SSH tunnel on loopback; the public
+      # 5432 listener is kept only for local administration.
+      listen_addresses = 'localhost, {{ ansible_default_ipv4.address }}'
+      wal_level = replica
+      max_wal_senders = 10
+      max_replication_slots = 10
+      wal_keep_size = 512MB
+      archive_mode = on
+      archive_command = '/usr/bin/pgbackrest --stanza=undermine archive-push %p'
+  notify: Restart PostgreSQL
+
+- name: Apply configuration changes before creating roles
+  ansible.builtin.meta: flush_handlers
+
+- name: Create the application role
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ app_user }}"
+    password: "{{ vault_app_pass }}"
+    state: present
+    no_password_changes: false
+  no_log: true
+
+- name: Create the replication role
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ repl_user }}"
+    password: "{{ vault_repl_pass }}"
+    role_attr_flags: REPLICATION,LOGIN
+    state: present
+  no_log: true
+
+- name: Create the application database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ app_db_name }}"
+    owner: "{{ app_user }}"
+    state: present
+
+- name: Authorize the standby tunnel key
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    key: "{{ hostvars[groups['prod_standby'][0]]['pg_tunnel_public_key'] }}"
+    state: present
+  when: hostvars[groups['prod_standby'][0]]['pg_tunnel_public_key'] is defined
+
+- name: Configure pg_hba.conf
+  ansible.builtin.blockinfile:
+    path: "{{ pg_config_dir }}/pg_hba.conf"
+    marker: "# {mark} ANSIBLE MANAGED ACCESS BLOCK"
+    block: |
+      # API container uses host networking and connects over loopback.
+      host    {{ app_db_name }}  {{ app_user }}  127.0.0.1/32          scram-sha-256
+      # Replication comes through the SSH tunnel, so it is also loopback.
+      # The stock Debian/Ubuntu pg_hba.conf already contains:
+      #   host replication all 127.0.0.1/32 scram-sha-256
+  notify: Reload PostgreSQL
+
+# The replica runs later in the same play. Without flushing the reload here,
+# pg_basebackup would connect before PostgreSQL has read the new pg_hba rules.
+- name: Apply pg_hba changes before replica setup
+  ansible.builtin.meta: flush_handlers

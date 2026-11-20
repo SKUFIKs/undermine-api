@@ -1,0 +1,56 @@
+---
+- name: Require a Vault token
+  ansible.builtin.assert:
+    that:
+      - hashicorp_vault_token | length > 0
+    fail_msg: >-
+      Vault token is empty. Export VAULT_TOKEN=... before running Ansible,
+      or pass -e hashicorp_vault_token=... (not recommended: shell history).
+
+- name: Read the non-secret configuration bundle from HashiCorp Vault
+  ansible.builtin.set_fact:
+    hashicorp_vault_bundle: >-
+      {{ lookup('community.hashi_vault.vault_kv2_get',
+                hashicorp_vault_config_path,
+                engine_mount_point=hashicorp_vault_mount_point,
+                url=hashicorp_vault_url,
+                token=hashicorp_vault_token,
+                namespace=hashicorp_vault_namespace).secret }}
+  no_log: true
+  when: hashicorp_vault_bundle is not defined
+
+- name: Read tokens from HashiCorp Vault
+  ansible.builtin.set_fact:
+    hashicorp_vault_tokens: >-
+      {{ lookup('community.hashi_vault.vault_kv2_get',
+                hashicorp_vault_tokens_path,
+                engine_mount_point=hashicorp_vault_mount_point,
+                url=hashicorp_vault_url,
+                token=hashicorp_vault_token,
+                namespace=hashicorp_vault_namespace).secret }}
+  no_log: true
+
+- name: Read database passwords from HashiCorp Vault
+  ansible.builtin.set_fact:
+    hashicorp_vault_database: >-
+      {{ lookup('community.hashi_vault.vault_kv2_get',
+                hashicorp_vault_database_path,
+                engine_mount_point=hashicorp_vault_mount_point,
+                url=hashicorp_vault_url,
+                token=hashicorp_vault_token,
+                namespace=hashicorp_vault_namespace).secret }}
+  no_log: true
+
+- name: Read app environment variables from HashiCorp Vault
+  ansible.builtin.set_fact:
+    hashicorp_vault_app: >-
+      {{ lookup('community.hashi_vault.vault_kv2_get',
+                hashicorp_vault_app_path,
+                engine_mount_point=hashicorp_vault_mount_point,
+                url=hashicorp_vault_url,
+                token=hashicorp_vault_token,
+                namespace=hashicorp_vault_namespace).secret }}
+  no_log: true
+
+- name: Apply the Vault bundle
+  ansible.builtin.include_tasks: apply.yml

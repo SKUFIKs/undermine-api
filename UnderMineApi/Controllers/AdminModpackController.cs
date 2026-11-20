@@ -5,10 +5,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
+using UnderMineApi.Extensions;
 using UnderMineApi.Models;
 using UnderMineApi.Services;
 
@@ -29,20 +31,24 @@ namespace UnderMineApi.Controllers;
 [ApiController]
 [Route("api/v1.0/admin/builds/import-modpack")]
 [Authorize(Roles = "admin")]
+[EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminModpackController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly ModpackImportService _modpacks;
     private readonly ILogger<AdminModpackController> _logger;
+    private readonly AdminAuditService _audit;
 
     public AdminModpackController(
         AppDbContext context,
         ModpackImportService modpacks,
-        ILogger<AdminModpackController> logger)
+        ILogger<AdminModpackController> logger,
+        AdminAuditService audit)
     {
         _context = context;
         _modpacks = modpacks;
         _logger = logger;
+        _audit = audit;
     }
 
     /// <summary>Imports the latest release (or a pinned version) of a Modrinth modpack.</summary>
@@ -211,10 +217,16 @@ public class AdminModpackController : ControllerBase
             await _context.SaveChangesAsync(ct);
         }
 
+        var actor = User.Identity?.Name ?? "system";
+
         _logger.LogInformation(
             "Admin {Actor} queued modpack import {BuildId}: '{Name}' ({McVersion}, {Loader} {LoaderVersion}), source {Source}, version {ModpackVersion}",
-            User.Identity?.Name ?? "system", build.BuildId, name, mcVersion, loaderType,
+            actor, build.BuildId, name, mcVersion, loaderType,
             loaderVersion, info.SourceType, staged.VersionLabel ?? staged.FileName);
+
+        await _audit.LogAsync(
+            actor, "import_modpack", "build", build.Id,
+            $"{name} ({mcVersion}, {loaderType}), source {info.SourceType}", ct);
 
         return Ok(Map(build));
     }

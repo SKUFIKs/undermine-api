@@ -1,0 +1,24 @@
+---
+# One-time Garage cluster bootstrap: layout, API key, bucket, website.
+# Do not run this on every deployment.
+#
+#   ansible-playbook -i inventory.ini garage-bootstrap.yml
+#
+# The generated API key is written to /etc/garage/undermine-api.key
+# on prod-1 (root-only). Copy it into deploy/.env.production.
+- name: Load variables from HashiCorp Vault
+  hosts: garage
+  gather_facts: false
+  connection: local
+  tags: [always]
+  roles:
+    - vault_secrets
+
+- name: Bootstrap the Garage cluster
+  hosts: garage
+  become: true
+  vars:
+    garage_bootstrap: true
+    ansible_remote_tmp: /tmp
+  roles:
+    - garage

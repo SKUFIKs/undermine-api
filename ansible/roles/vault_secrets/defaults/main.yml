@@ -1,0 +1,48 @@
+---
+# Vault connection and secret paths.
+hashicorp_vault_url: "https://vault.example.com"
+# Recommended: export VAULT_TOKEN=... in the shell.
+# Never commit the real token.
+hashicorp_vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+# Optional Vault Enterprise namespace. Leave empty for the root namespace.
+hashicorp_vault_namespace: ""
+hashicorp_vault_mount_point: secret
+
+# Non-secret variables and per-host app settings.
+hashicorp_vault_config_path: undermine-api/config
+# ghcr_token, cloudflare_token, garage_rpc_secret.
+hashicorp_vault_tokens_path: undermine-api/tokens
+# app_pass, repl_pass, staging_pass.
+hashicorp_vault_database_path: undermine-api/database
+# Application environment variables (JWT, admin, S3, Build, limits).
+hashicorp_vault_app_path: undermine-api/app
+
+# Every key below must exist in config.vars.
+required_vault_vars:
+  - api_url
+  - staging_url
+  - cdn_url
+  - api_email
+  - deploy_ssh_public_key
+  - s3_bucket
+  - garage_web_root_domain
+  - garage_rpc_public_addrs
+  - pgbackrest_repo_host
+  - pg_major_version
+  - pg_new_data
+  - pg_staging_data
+  - app_user
+  - app_db_name
+  - repl_user
+  - garage_capacity
+  - garage_bucket
+  - garage_api_key_file
+
+# Every inventory host must have an entry in config.hosts with these keys.
+required_vault_host_vars:
+  - garage_zone
+  - app_compose_file
+  - app_project_name
+  - app_compose_profiles
+  - app_start
+  - app_run_migrations

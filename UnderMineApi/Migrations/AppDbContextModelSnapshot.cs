@@ -184,6 +184,10 @@ namespace UnderMineApi.Migrations
 
                     b.HasIndex("BuildPresetId");
 
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("Status", "CreatedAt");
+
                     b.ToTable("build_instances", (string)null);
                 });
 
@@ -218,6 +222,8 @@ namespace UnderMineApi.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BuildInstanceId");
+
+                    b.HasIndex("CreatedAt");
 
                     b.ToTable("build_logs", (string)null);
                 });
@@ -343,7 +349,8 @@ namespace UnderMineApi.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
                     b.Property<string>("DeviceId")
-                        .HasColumnType("text")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
                         .HasColumnName("device_id");
 
                     b.Property<string>("Email")
@@ -379,12 +386,21 @@ namespace UnderMineApi.Migrations
                         .HasColumnType("text")
                         .HasColumnName("regip");
 
+                    b.Property<string>("RegIpPrefix")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("regip_prefix");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("text")
                         .HasDefaultValue("user")
                         .HasColumnName("user_role");
+
+                    b.Property<int>("TokenVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("token_version");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -397,6 +413,12 @@ namespace UnderMineApi.Migrations
                         .HasColumnName("player_uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DeviceId");
+
+                    b.HasIndex("RegIp");
+
+                    b.HasIndex("RegIpPrefix");
 
                     b.HasIndex("Username")
                         .IsUnique();

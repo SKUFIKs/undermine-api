@@ -3,8 +3,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using UnderMineApi.DTOs;
+using UnderMineApi.Extensions;
 using UnderMineApi.Services;
 
 namespace UnderMineApi.Controllers
@@ -15,6 +17,7 @@ namespace UnderMineApi.Controllers
     [ApiController]
     [Route("api/v1.0/versions")]
     [Authorize(Roles = "admin")]
+    [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
     public class VersionsController : ControllerBase
     {
         private readonly VersionCatalogService _catalog;

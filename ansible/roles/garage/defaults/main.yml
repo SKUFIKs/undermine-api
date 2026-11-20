@@ -1,0 +1,44 @@
+---
+garage_version: "v2.5.0"
+garage_binary_url: "https://garagehq.deuxfleurs.fr/_releases/{{ garage_version }}/x86_64-unknown-linux-musl/garage"
+
+garage_user: garage
+garage_group: garage
+garage_config_dir: /etc/garage
+garage_config_file: /etc/garage/garage.toml
+garage_meta_dir: /var/lib/garage/meta
+garage_data_dir: /srv/undermine/garage/data
+
+# Three nodes (Sweden, Germany, RF) with two replicas.
+garage_replication_factor: 2
+garage_consistency_mode: "consistent"
+# S3 signing region. Keep this equal to the API's S3:Region (Minio client
+# defaults to us-east-1).
+garage_s3_region: us-east-1
+garage_s3_port: 3900
+garage_rpc_port: 3901
+garage_web_port: 3902
+
+# S3 API and s3_web stay on loopback: nginx and the API container use them.
+# Only RPC (3901) is reachable from the other Garage nodes.
+garage_s3_bind: "127.0.0.1:{{ garage_s3_port }}"
+garage_web_bind: "127.0.0.1:{{ garage_web_port }}"
+garage_rpc_bind: "[::]:{{ garage_rpc_port }}"
+
+# Non-secret values are normally overridden in group_vars/all/main.yml.
+garage_web_root_domain: cdn.example.com
+garage_capacity: 10G
+garage_bucket: "{{ s3_bucket | default('undermine-builds') }}"
+# Separate bucket for staging builds. It is created by garage-staging-bucket.yml
+# (or garage-bootstrap.yml) and uses the same API key as production.
+garage_staging_bucket: undermine-staging-builds
+garage_api_key_name: undermine-api
+garage_api_key_file: /etc/garage/undermine-api.key
+
+# Per-host public RPC addresses, e.g.:
+#   garage_rpc_public_addrs:
+#     prod-1-se: 203.0.113.10
+garage_rpc_public_addrs: {}
+
+# Set to true only for the one-time garage-bootstrap.yml run.
+garage_bootstrap: false

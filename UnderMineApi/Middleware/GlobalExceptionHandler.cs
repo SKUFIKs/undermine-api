@@ -39,8 +39,9 @@ namespace UnderMineApi.Middleware
             var response = new
             {
                 status = 500,
-                request_id = requestId,
-                message = "Internal server error. Please try again later."
+                error = "INTERNAL_ERROR",
+                message = "Internal server error. Please try again later.",
+                request_id = requestId
             };
 
             await httpContext.Response.WriteAsJsonAsync(response, cancellationToken);
