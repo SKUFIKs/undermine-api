@@ -636,10 +636,15 @@ namespace UnderMineApi.Services
             // so drop in a minimal profile before launching the installer.
             EnsureLauncherProfile(targetDir);
 
+            var installerHeapMb = Math.Clamp(
+                _config.GetValue("Build:InstallerMaxHeapMb", 1024),
+                256,
+                4096);
+
             var processInfo = new ProcessStartInfo
             {
                 FileName = javaPath,
-                Arguments = $"-jar \"{installerPath}\" --installClient \"{targetDir}\"",
+                Arguments = $"-Xmx{installerHeapMb}m -jar \"{installerPath}\" --installClient \"{targetDir}\"",
                 WorkingDirectory = workingDir,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

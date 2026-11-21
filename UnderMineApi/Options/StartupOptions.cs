@@ -35,6 +35,12 @@ public sealed class BuildOptions
     /// to false and are started with the queue worker disabled.
     /// </summary>
     public bool WorkerEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Maximum Java heap for Forge/NeoForge installers. The JVM default is derived from the
+    /// container limit and is too small for the 1.21+ mapping processors.
+    /// </summary>
+    public int InstallerMaxHeapMb { get; set; } = 1024;
 }
 
 public sealed class DatabaseOptions
@@ -95,6 +101,8 @@ public static class StartupOptionsExtensions
         services.AddOptions<BuildOptions>()
             .Bind(configuration.GetSection("Build"))
             .Validate(o => !string.IsNullOrWhiteSpace(o.RootPath), "Build:RootPath cannot be empty.")
+            .Validate(o => o.InstallerMaxHeapMb >= 256 && o.InstallerMaxHeapMb <= 4096,
+                "Build:InstallerMaxHeapMb must be between 256 and 4096.")
             .ValidateOnStart();
 
         services.AddOptions<DatabaseOptions>()

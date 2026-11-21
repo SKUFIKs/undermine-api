@@ -933,10 +933,12 @@ pending → downloading → hashing → completed
    * **Fabric** — подтягиваются библиотеки с `meta.fabricmc.net`, профиль пишется в
      `versions/<profile>/<profile>.json`;
    * **Forge / NeoForge** — скачивается установщик с Maven и запускается headless:
-     `java -jar <installer> --installClient <buildDir>`. Перед запуском создаётся
-     `launcher_profiles.json`, иначе установщик отказывается работать. Java ищется в
-     `JAVA_HOME`, затем в `PATH`, затем в стандартных каталогах (`Program Files`,
-     `Eclipse Adoptium`, `Microsoft`) или `/usr/lib/jvm/*`.
+     `java -Xmx<Build:InstallerMaxHeapMb>m -jar <installer> --installClient <buildDir>`.
+     Перед запуском создаётся `launcher_profiles.json`, иначе установщик отказывается
+     работать. Java ищется в `JAVA_HOME`, затем в `PATH`, затем в стандартных каталогах
+     (`Program Files`, `Eclipse Adoptium`, `Microsoft`) или `/usr/lib/jvm/*`.
+     Для 1.21+ маппинги требуют ~1 ГБ heap; на хостах с 2 ГБ RAM нужен swap или
+     больше памяти. staging-контейнеру поднят лимит до 1.5 ГБ.
 2. **Пресет.** Если задан `buildPresetId`, папки `mods/`, `shaderpacks/`,
    `resourcepacks/` очищаются и заново наполняются включёнными модами. Для модов из
    Modrinth подбирается версия, совместимая с версией игры и загрузчиком; загруженные

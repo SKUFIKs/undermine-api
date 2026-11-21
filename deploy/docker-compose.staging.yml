@@ -13,8 +13,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'
-          memory: 512M
+          cpus: '1.0'
+          memory: 1536M
     volumes:
       - /srv/undermine/staging/builds:/app/builds
       - /srv/undermine/staging/java:/app/java

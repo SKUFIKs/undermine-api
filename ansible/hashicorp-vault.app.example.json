@@ -38,6 +38,7 @@
   "S3__FallbackCdnBaseUrl": "",
   "Build__RootPath": "/app/builds",
   "Build__WorkerEnabled": "true",
+  "Build__InstallerMaxHeapMb": "1024",
   "Database__MigrateOnStartup": "false",
   "JavaRuntime__RootPath": "/app/java",
   "ForwardedHeaders__Enabled": "true",
