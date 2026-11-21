@@ -1422,6 +1422,11 @@ docker compose down -v              # остановить и удалить д�
 - Теги: `ghcr.io/skufiks/undermine-api:sha-<full-sha>` и `latest`.
 - Образы из PR никогда не публикуются.
 
+Дополнительно:
+
+- `.github/workflows/secrets.yml` — Gitleaks secret scan;
+- `.github/workflows/codeql.yml` — CodeQL для C#.
+
 Локальная сборка и публикация:
 
 ```bash

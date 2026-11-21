@@ -13,8 +13,41 @@
 - NuGet-кэш и Docker layer cache (`type=gha`);
 - образы из PR никогда не публикуются.
 
+`.github/workflows/deploy-staging.yml`:
+
+- запускается после успешного `CI` в `master` или вручную;
+- environment `staging`;
+- использует `vars.STAGING_URL` для healthcheck;
+- принимает `image_tag` и необязательный `git_ref` для ручного запуска/отката.
+
+`.github/workflows/deploy-production.yml`:
+
+- только вручную;
+- environment `production` с required reviewer;
+- требует `confirm=deploy`;
+- делает pgBackRest diff backup перед деплоем;
+- использует `vars.API_URL` для healthcheck;
+- принимает `image_tag` и необязательный `git_ref`.
+
 Деплой-воркфлоу должны использовать **полный** `sha-<github.sha>`, а не
 короткий SHA. `deploy-local.sh` тоже переведён на полный SHA.
+
+## Security workflows
+
+- `.github/workflows/secrets.yml` — Gitleaks на PR, push в `master` и вручную.
+  Check: `Secret Scan / Secret Scan (Gitleaks)`.
+- `.github/workflows/codeql.yml` — CodeQL для C# на PR, push в `master`,
+  еженедельно и вручную. Check: `CodeQL / Analyze (C#)`.
+- `Dependabot alerts`, `Secret scanning` и `Push protection` включаются в
+  **Settings → Code security and analysis**. Это не check runs, их нельзя
+  добавлять в required status checks.
+
+Добавляй `Secret Scan (Gitleaks)` и `Analyze (C#)` в required checks только
+после первого успешного запуска — GitHub показывает в списке только checks,
+которые уже запускались.
+
+Первый полный прогон Gitleaks может найти старые секреты в истории. Правильное
+лечение — ротация и очистка истории, а не allowlist реальных секретов.
 
 ## GitHub Environments
 
@@ -47,6 +80,18 @@ kv/data/undermine-api/database
 kv/data/undermine-api/app
 kv/data/undermine-api/app-staging
 ```
+
+### Переменные environment
+
+Это не секреты, а environment variables:
+
+| Переменная | Environment | Назначение |
+|---|---|---|
+| `STAGING_URL` | `staging` | базовый URL для healthcheck, например `https://staging.example.com` |
+| `API_URL` | `production` | базовый URL для healthcheck, например `https://api.example.com` |
+
+Healthcheck в workflow использует `vars.STAGING_URL` / `vars.API_URL`,
+поэтому реальные домены не попадают в публичный репозиторий.
 
 ### Что НЕ нужно
 
@@ -103,7 +148,7 @@ hashicorp_vault_app_path=undermine-api/app-staging
   with:
     python-version: "3.12"
 
-- run: pip install ansible-core hvac
+- run: pip install "ansible-core~=2.19.0" hvac
 - run: ansible-galaxy collection install -r ansible/requirements.yml
 
 - name: Write SSH key
@@ -139,115 +184,61 @@ hashicorp_vault_app_path=undermine-api/app-staging
 
 ## Staging
 
+Реализован в `.github/workflows/deploy-staging.yml`.
+
 Триггер:
 
 - после успешного `CI` в `master` (`workflow_run`);
 - вручную (`workflow_dispatch`) с обязательным `image_tag`.
 
-```yaml
-name: Deploy staging
+Ручной запуск принимает:
 
-on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [master]
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Immutable image tag, e.g. sha-<full-sha>"
-        required: true
-        type: string
+- `image_tag` — только `sha-...`;
+- `git_ref` — необязательный SHA/ref для checkout Ansible-файлов
+  (удобно для отката на старый образ).
 
-concurrency:
-  group: deploy-staging
-  cancel-in-progress: true
+Что делает:
 
-permissions:
-  contents: read
+1. checkout коммита из `workflow_run` / `git_ref` / выбранной ветки;
+2. проверяет, что тег начинается с `sha-`;
+3. ставит Ansible, пишет SSH-ключ, inventory и `group_vars/all/main.yml`;
+4. выполняет:
+   ```bash
+   ansible-playbook -i inventory.ini playbook.yml \
+     --tags staging \
+     -e "api_image=ghcr.io/skufiks/undermine-api:${IMAGE_TAG}"
+   ```
+5. проверяет `vars.STAGING_URL/health/ready`.
 
-jobs:
-  deploy:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: staging
-    env:
-      IMAGE_TAG: >
-        ${{ github.event_name == 'workflow_run'
-            && format('sha-{0}', github.event.workflow_run.head_sha)
-            || inputs.image_tag }}
-    steps:
-      # общие шаги из раздела выше
-      - name: Deploy
-        working-directory: ansible
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        run: |
-          ansible-playbook -i inventory.ini playbook.yml \
-            --tags staging \
-            -e "api_image=ghcr.io/skufiks/undermine-api:${IMAGE_TAG}"
-
-      - name: Health check
-        run: curl -fsS https://staging.example.com/health/ready
-```
+Environment: `staging`.
 
 ## Production
 
-Только вручную, с reviewer:
+Реализован в `.github/workflows/deploy-production.yml`.
 
-```yaml
-name: Deploy production
+Только вручную, с reviewer. Дополнительно требуется ввести `confirm=deploy`.
 
-on:
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Immutable image tag, e.g. sha-<full-sha>"
-        required: true
-        type: string
+Ручной запуск принимает:
 
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+- `image_tag` — только `sha-...`;
+- `git_ref` — необязательный SHA/ref для checkout Ansible-файлов;
+- `confirm` — строка `deploy`.
 
-permissions:
-  contents: read
+Что делает:
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: production
-    env:
-      IMAGE_TAG: ${{ inputs.image_tag }}
-    steps:
-      # общие шаги из раздела выше
+1. checkout `git_ref` / выбранной ветки;
+2. проверяет `confirm` и `image_tag`;
+3. ставит Ansible, пишет SSH-ключ, inventory и `group_vars/all/main.yml`;
+4. делает `pgbackrest --type=diff --stanza=undermine backup`;
+5. выполняет:
+   ```bash
+   ansible-playbook -i inventory.ini playbook.yml \
+     --tags app \
+     -e "api_image=ghcr.io/skufiks/undermine-api:${IMAGE_TAG}"
+   ```
+6. проверяет `vars.API_URL/health/ready`.
 
-      - name: Backup PostgreSQL
-        working-directory: ansible
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        run: |
-          ansible prod_primary -b -m command \
-            -a "pgbackrest --type=diff --stanza=undermine backup"
-
-      - name: Deploy
-        working-directory: ansible
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        run: |
-          ansible-playbook -i inventory.ini playbook.yml \
-            --tags app \
-            -e "api_image=ghcr.io/skufiks/undermine-api:${IMAGE_TAG}"
-
-      - name: Health check
-        run: |
-          curl -fsS https://api.example.com/health/ready
-          curl -fsS https://staging.example.com/health/ready
-```
+Environment: `production`.
 
 `--tags app` без `-l`:
 
@@ -269,7 +260,8 @@ jobs:
 Для `master`:
 
 - Require a pull request before merging;
-- Require status checks: `Build and test`, `Docker image`;
+- Require status checks:
+  `Build and test`, `Docker image`, `Secret Scan (Gitleaks)`, `Analyze (C#)`;
 - Require branches to be up to date;
 - Block force pushes;
 - Restrict direct pushes.
@@ -280,6 +272,7 @@ jobs:
 - [ ] В `production` включён required reviewer.
 - [ ] Секреты `SSH_PRIVATE_KEY`, `ANSIBLE_INVENTORY`, `VAULT_ADDR`,
       `VAULT_TOKEN` добавлены в оба environment.
+- [ ] В `staging` добавлена переменная `STAGING_URL`, в `production` — `API_URL`.
 - [ ] Vault-токен read-only и не имеет доступа к записи.
 - [ ] Проверено, что staging-деплой по SSH проходит с GitHub-hosted runner.
 - [ ] В `master` включена branch protection.

@@ -21,9 +21,6 @@
     state: directory
     mode: '0700'
 
-# Separate file on purpose: deploy_ansible's `doh` role owns
-# /root/.secrets/cloudflare.ini and renews docs.example.com with it.
-# This role must never overwrite that file.
 - name: Create Cloudflare credentials file for API certificates
   ansible.builtin.copy:
     dest: "{{ cloudflare_credentials_file }}"
@@ -105,8 +102,6 @@
   notify: Restart nginx
 
 - name: Enable the nginx site(create symlink)
-  # In check mode the template above is not written, so the symlink would fail
-  # on a missing src. Skip it; a real run creates the file first.
   ansible.builtin.file:
     src: /etc/nginx/sites-available/{{ api_url }}.conf
     dest: /etc/nginx/sites-enabled/{{ api_url }}.conf

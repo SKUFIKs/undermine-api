@@ -1,7 +1,4 @@
 ---
-# Create a Garage bucket, grant the API key read/write access, and enable
-# the public bucket website. Callers must set garage_bucket_name and
-# garage_api_key_id. The first Garage host is used (run_once).
 - name: List Garage buckets
   ansible.builtin.command: >-
     /usr/local/bin/garage -c {{ garage_config_file }} bucket list

@@ -92,9 +92,6 @@
 
 - name: Harden SSH
   ansible.builtin.copy:
-    # sshd keeps the FIRST value it reads, and files in sshd_config.d are
-    # included alphabetically. The provider ships 00password.conf with
-    # PermitRootLogin/PasswordAuthentication yes, so our file must sort first.
     dest: /etc/ssh/sshd_config.d/000-undermine-hardening.conf
     content: |
       Port {{ custom_ssh_port }}

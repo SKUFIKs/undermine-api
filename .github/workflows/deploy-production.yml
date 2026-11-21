@@ -1,0 +1,116 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable image tag, e.g. sha-<full-git-sha>"
+        required: true
+        type: string
+      git_ref:
+        description: "Git ref/SHA for Ansible files (default: selected branch)"
+        required: false
+        type: string
+      confirm:
+        description: "Type deploy to confirm production deployment"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      - name: Confirm production deploy
+        run: |
+          if [ "${{ inputs.confirm }}" != "deploy" ]; then
+            echo "Set confirm=deploy to proceed."
+            exit 1
+          fi
+
+      - name: Validate image tag
+        id: image
+        run: |
+          tag="${{ inputs.image_tag }}"
+
+          case "$tag" in
+            sha-*) ;;
+            *)
+              echo "image_tag must start with sha-"
+              exit 1
+              ;;
+          esac
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: |
+          pip install "ansible-core~=2.19.0" hvac
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Write SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Write inventory
+        run: |
+          printf '%s\n' "${{ secrets.ANSIBLE_INVENTORY }}" > ansible/inventory.ini
+          chmod 600 ansible/inventory.ini
+
+      - name: Write Vault group vars
+        run: |
+          mkdir -p ansible/group_vars/all
+          cat > ansible/group_vars/all/main.yml <<EOF
+          hashicorp_vault_url: "${{ secrets.VAULT_ADDR }}"
+          hashicorp_vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+          hashicorp_vault_mount_point: kv
+          hashicorp_vault_config_path: undermine-api/config
+          hashicorp_vault_tokens_path: undermine-api/tokens
+          hashicorp_vault_database_path: undermine-api/database
+          hashicorp_vault_app_path: undermine-api/app
+          EOF
+
+      - name: Backup PostgreSQL
+        working-directory: ansible
+        run: |
+          ansible prod_primary -b -m command \
+            -a "pgbackrest --type=diff --stanza=undermine backup"
+
+      - name: Deploy production
+        working-directory: ansible
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          ansible-playbook -i inventory.ini playbook.yml \
+            --tags app \
+            -e "api_image=ghcr.io/skufiks/undermine-api:${IMAGE_TAG}"
+
+      - name: Health check
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          test -n "$API_URL"
+          curl -fsS "$API_URL/health/ready"

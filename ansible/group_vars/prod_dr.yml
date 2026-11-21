@@ -1,3 +1,1 @@
 ---
-# prod-3 variables (garage_zone, app_* ) are loaded from HashiCorp Vault
-# by roles/vault_secrets. See ansible/hashicorp-vault.config.example.json.
