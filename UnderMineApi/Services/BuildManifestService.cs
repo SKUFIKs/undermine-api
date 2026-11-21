@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -114,6 +115,7 @@ namespace UnderMineApi.Services
             var uploadedCount = 0;
             var manifestByIndex = new ClientManifestFile[files.Count];
             var dbByIndex = new BuildFile[files.Count];
+            Exception? firstUploadError = null;
 
             using (var semaphore = new SemaphoreSlim(MaxS3UploadsInParallel))
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
@@ -160,6 +162,7 @@ namespace UnderMineApi.Services
                         catch (Exception ex)
                         {
                             // Log the root failure before cancelling siblings so the true cause is visible.
+                            Interlocked.CompareExchange(ref firstUploadError, ex, null);
                             _logger.LogError(ex, "Failed to upload file {Path} to S3 (index {Index})", file.Path, index);
                             linkedCts.Cancel();
                             throw;
@@ -171,7 +174,16 @@ namespace UnderMineApi.Services
                     }, linkedCt));
                 }
 
-                await Task.WhenAll(tasks);
+                try
+                {
+                    await Task.WhenAll(tasks);
+                }
+                catch (OperationCanceledException) when (firstUploadError != null)
+                {
+                    // A sibling upload was cancelled by the root failure; report the real S3
+                    // error instead of the generic "A task was canceled."
+                    ExceptionDispatchInfo.Capture(firstUploadError).Throw();
+                }
             }
 
             manifestFiles.AddRange(manifestByIndex);
