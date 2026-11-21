@@ -5,7 +5,8 @@ services:
     profiles:
       - failover-only
     env_file:
-      - .env.production 
+      - path: .env.production
+        format: raw
     network_mode: host
     environment:
       ASPNETCORE_URLS: http://127.0.0.1:5000
