@@ -21,7 +21,7 @@
 | **OPS-06** — compose + роль app | ✅ | prod-1 API работает; staging на prod-2 развёрнут, `/health/ready` = 200, bucket и nginx vhost готовы, basic auth включён |
 | **OPS-07** — флаги multi-node в коде | ✅ | `WorkerEnabled`, `MigrateOnStartup`, `ManageBucket` + one-shot `--migrate-only`; тесты проходят |
 | **PRE-CI** — ворота перед GitHub Actions | 🔄 | staging полностью готов (bucket, nginx basic auth, failover); остались GitHub Environments/секреты, branch protection, безопасность, проверка отката |
-| **OPS-08–10** — CI/CD | 🔄 | `CI` (PR + master publish) готов; `deploy-staging.yml` и `deploy-production.yml` ещё не написаны |
+| **OPS-08–10** — CI/CD | 🔄 | `CI`, `deploy-staging.yml` и `deploy-production.yml` готовы; нужны Environments/секреты и первый прогон |
 | **OPS-11–16** — мониторинг, runbook, безопасность | ⏳ | После CI/CD |
 
 **Текущая точка:** prod-1 принимает трафик, API здоров, админка и загрузка сборок
@@ -658,7 +658,9 @@ S3__ManageBucket=false
 
 - [ ] Старые утёкшие пароли/ключи из истории git ротированы.
 - [ ] История очищена (`git filter-repo`/BFG) или репозиторий пересоздан.
-- [ ] В GitHub включены secret scanning и push protection.
+- [x] Добавлены workflow `secrets.yml` (Gitleaks) и `codeql.yml` (CodeQL C#).
+- [ ] В GitHub включены secret scanning и push protection
+      (Settings → Code security and analysis).
 - [ ] `ansible/vault.legacy.yml`, `vault.config.json`, `deploy/.env.*` и
       `ansible/inventory.ini` отсутствуют в индексе git.
 
@@ -701,16 +703,16 @@ S3__ManageBucket=false
 
 > Запускать после **PRE-CI** (staging уже развёрнут вручную) и **OPS-08**.
 
-- [ ] `.github/workflows/deploy-staging.yml`:
+- [x] `.github/workflows/deploy-staging.yml`:
   - запуск после успешного CI в `master` (`workflow_run`) или вручную;
   - GitHub Environment `staging`;
   - деплой на prod-2 через Ansible/SSH, в отдельный compose-проект.
-- [ ] Шаги:
-  1. checkout коммита из `workflow_run` / `workflow_dispatch`;
+- [x] Шаги:
+  1. checkout коммита из `workflow_run` / `git_ref` / выбранной ветки;
   2. установить Ansible + коллекции;
   3. записать `inventory.ini` и `group_vars/all/main.yml` из секретов;
   4. `ansible-playbook -i inventory.ini playbook.yml --tags staging -e api_image=...`;
-  5. healthcheck `https://staging.example.com/health/ready`.
+  5. healthcheck `vars.STAGING_URL/health/ready`.
 - [x] Staging БД — отдельный нативный кластер на prod-2 (`127.0.0.1:5433`).
 - [x] Staging закрыт basic auth на nginx (`/api/`, `/admin/`);
       `/health` и `/builds/` публичные.
@@ -725,17 +727,18 @@ S3__ManageBucket=false
 
 > Запускать после **PRE-CI** (ручной откат проверен) и **OPS-09**.
 
-- [ ] `.github/workflows/deploy-production.yml`:
-  - только вручную (или по тегу);
+- [x] `.github/workflows/deploy-production.yml`:
+  - только вручную;
   - GitHub Environment `production` с required reviewer;
+  - обязательный `confirm=deploy`;
   - секреты production.
-- [ ] Порядок:
+- [x] Порядок:
   1. `pgbackrest --type=diff --stanza=undermine backup`;
   2. `ansible-playbook -i inventory.ini playbook.yml --tags app -e api_image=...`;
   3. app-роль сама делает one-shot миграции на prod-1 и
      `docker compose up -d --force-recreate` с healthcheck;
   4. на prod-2/prod-3 образ обновляется, API остаётся остановленным;
-  5. smoke-тест `https://api.example.com/health/ready`.
+  5. smoke-тест `vars.API_URL/health/ready`.
 - [ ] Откат: вернуть предыдущий `API_IMAGE`; БД — из бэкапа, если миграция
       несовместима.
 - [ ] Уведомление в Telegram/Discord об успехе/ошибке.

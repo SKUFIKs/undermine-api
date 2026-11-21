@@ -66,7 +66,6 @@
   when: not replica_initialized.stat.exists
 
 - name: Configure .pgpass for streaming replication
-  # pg_basebackup -R does not persist PGPASSWORD in primary_conninfo.
   ansible.builtin.copy:
     dest: /var/lib/postgresql/.pgpass
     content: "127.0.0.1:{{ pg_tunnel_port }}:replication:{{ repl_user }}:{{ vault_repl_pass }}\n"

@@ -9,7 +9,6 @@ services:
       ASPNETCORE_URLS: http://127.0.0.1:5000
       Kestrel__Endpoints__Http__Url: http://127.0.0.1:5000
       ForwardedHeaders__KnownNetworks: 127.0.0.1/32
-      # Migrations are a separate one-shot step (docker run ... --migrate-only).
       Database__MigrateOnStartup: "false"
     volumes:
       - /srv/undermine/builds:/app/builds

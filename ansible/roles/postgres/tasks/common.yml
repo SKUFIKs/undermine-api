@@ -23,8 +23,6 @@
     name: en_US.UTF-8
     state: present
 
-# Only the primary gets the /srv data directory move. The standby is
-# re-initialized by pg_basebackup; the DR only needs the binaries for restore.
 - name: Prepare the primary data directory
   when: inventory_hostname in groups['prod_primary']
   block:
@@ -65,8 +63,6 @@
         state: present
       notify: Restart PostgreSQL
 
-# Staging uses 5433. The main cluster must stay on 5432 on the primary and
-# standby. The DR has no managed cluster, so skip it there.
 - name: Ensure the main cluster uses port 5432
   ansible.builtin.lineinfile:
     path: "{{ pg_config_dir }}/postgresql.conf"
