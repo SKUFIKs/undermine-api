@@ -620,10 +620,16 @@ S3__ManageBucket=false
 >    и пишет `/etc/nginx/.htpasswd-staging`.
 > 4. Применить: `ansible-playbook -i inventory.ini playbook.yml --tags nginx -l prod_standby`.
 > 5. Проверить: `curl -u admin https://staging.example.com/admin/`.
+>
+> Basic auth стоит **только на `/admin/`**. На `/api/` его нельзя ставить:
+> SPA отправляет `Authorization: Bearer <JWT>`, и этот заголовок перекрывает
+> Basic-креды браузера. Иначе получается бесконечный запрос логина/пароля.
+> `/api/` защищён JWT приложения; при необходимости его можно дополнительно
+> ограничить через `vars.staging_ip_allowlist` (например, `["203.0.113.10/32"]`).
 
 > PROXY protocol починен: nginx access log показывает реальные IP клиентов.
-> IP allowlist для staging теперь можно включить при желании, но текущая
-> защита — basic auth.
+> IP allowlist для staging можно включить через `vars.staging_ip_allowlist`;
+> он применяется к `/api/` и как альтернатива Basic для `/admin/`.
 
 > `hosts.staging-1.app_env_overrides.S3__CdnBaseUrl` исправлен на
 > `https://staging.example.com`.
@@ -659,6 +665,8 @@ S3__ManageBucket=false
 - [ ] Старые утёкшие пароли/ключи из истории git ротированы.
 - [ ] История очищена (`git filter-repo`/BFG) или репозиторий пересоздан.
 - [x] Добавлены workflow `secrets.yml` (Gitleaks) и `codeql.yml` (CodeQL C#).
+- [x] CodeQL findings исправлены: 0 результатов в `csharp-queries` и
+      `csharp-security-extended`.
 - [ ] В GitHub включены secret scanning и push protection
       (Settings → Code security and analysis).
 - [ ] `ansible/vault.legacy.yml`, `vault.config.json`, `deploy/.env.*` и
@@ -733,7 +741,8 @@ S3__ManageBucket=false
   - обязательный `confirm=deploy`;
   - секреты production.
 - [x] Порядок:
-  1. `pgbackrest --type=diff --stanza=undermine backup`;
+  1. `ansible-playbook -i inventory.ini backup.yml`
+     (pgBackRest diff backup на prod-3, от имени postgres);
   2. `ansible-playbook -i inventory.ini playbook.yml --tags app -e api_image=...`;
   3. app-роль сама делает one-shot миграции на prod-1 и
      `docker compose up -d --force-recreate` с healthcheck;

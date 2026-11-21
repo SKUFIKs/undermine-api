@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using UnderMineApi.Services;
 using UnderMineApi.Services.Interfaces;
 
 namespace UnderMineApi.Middleware;
@@ -121,7 +122,11 @@ public class AccountBanMiddleware
 
         _logger.LogWarning(
             "Blocked request for user {UserId}: {Error} ({Method} {Path}) [RequestId: {RequestId}]",
-            userId, error, context.Request.Method, context.Request.Path, requestId);
+            LogSanitizer.Clean(userId),
+            LogSanitizer.Clean(error),
+            LogSanitizer.Clean(context.Request.Method),
+            LogSanitizer.Clean(context.Request.Path.ToString()),
+            LogSanitizer.Clean(requestId));
 
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json";

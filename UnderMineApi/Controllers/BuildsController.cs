@@ -53,10 +53,10 @@ namespace UnderMineApi.Controllers
             [FromBody] CreateBuildRequest request,
             CancellationToken ct)
         {
-            var actor = User.FindFirst(ClaimTypes.Name)?.Value ?? "system";
+            var actor = LogSanitizer.Clean(User.FindFirst(ClaimTypes.Name)?.Value ?? "system");
 
             _logger.LogInformation("Admin {Actor} creating build: {Name} ({McVersion}, {Loader})",
-                actor, request.Name, request.McVersion, request.Loader);
+                actor, LogSanitizer.Clean(request.Name), LogSanitizer.Clean(request.McVersion), LogSanitizer.Clean(request.Loader));
 
             // Best-effort validation against the live version catalog. If the upstream metadata
             // is temporarily unavailable we keep the old behaviour (accept the request) instead
@@ -84,7 +84,7 @@ namespace UnderMineApi.Controllers
             {
                 _logger.LogWarning(ex,
                     "Could not validate Minecraft version {Version} for loader {Loader}; continuing",
-                    request.McVersion, request.Loader);
+                    LogSanitizer.Clean(request.McVersion), LogSanitizer.Clean(request.Loader));
             }
 
             var build = new BuildInstance

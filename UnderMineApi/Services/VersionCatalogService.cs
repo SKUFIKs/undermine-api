@@ -105,7 +105,8 @@ namespace UnderMineApi.Services
             {
                 // A loader-specific upstream being down must not make the picker unusable: fall
                 // back to the full Mojang list and tell the client why.
-                _logger.LogWarning(ex, "Could not load {Loader} Minecraft versions, using the plain Mojang list", normalized);
+                _logger.LogWarning(ex, "Could not load {Loader} Minecraft versions, using the plain Mojang list",
+                    LogSanitizer.Clean(normalized));
                 response.Message = $"Could not read the {normalized} version list; showing all Minecraft versions.";
                 supported = null;
             }
@@ -216,7 +217,8 @@ namespace UnderMineApi.Services
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogWarning(ex, "Could not load {Loader} {McVersion} loader versions", normalized, mcVersion);
+                _logger.LogWarning(ex, "Could not load {Loader} {McVersion} loader versions",
+                    LogSanitizer.Clean(normalized), LogSanitizer.Clean(mcVersion));
                 response.Message = $"Could not read the {normalized} version list for Minecraft {mcVersion}.";
             }
 

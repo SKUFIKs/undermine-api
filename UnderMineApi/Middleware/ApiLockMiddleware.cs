@@ -34,24 +34,26 @@ namespace UnderMineApi.Middleware
             }
 
             context.Response.StatusCode = 503;
-            var requestId = context.Items.ContainsKey("RequestId")
+            var requestId = LogSanitizer.Clean(context.Items.ContainsKey("RequestId")
                 ? context.Items["RequestId"]?.ToString()
-                : Guid.NewGuid().ToString();
+                : Guid.NewGuid().ToString());
 
-            var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var method = LogSanitizer.Clean(context.Request.Method);
+            var path = LogSanitizer.Clean(context.Request.Path.ToString());
+            var clientIp = LogSanitizer.Clean(context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
 
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["RequestId"] = requestId,
-                ["Method"] = context.Request.Method,
-                ["Path"] = context.Request.Path.ToString(),
+                ["Method"] = method,
+                ["Path"] = path,
                 ["ClientIP"] = clientIp
             }))
             {
                 _logger.LogWarning(
                     "Request rejected: API is in maintenance mode. {Method} {Path} [RequestId: {RequestId}] [ClientIP: {ClientIP}]",
-                    context.Request.Method,
-                    context.Request.Path,
+                    method,
+                    path,
                     requestId,
                     clientIp);
             }

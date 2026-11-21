@@ -420,3 +420,8 @@ ansible/**/*.retry
 deploy/.env.local
 deploy/.env.development
 deploy/.env.test
+
+# Local CodeQL databases, SARIF reports and extension-generated query packs.
+codeql-db*/
+codeql-results*.sarif
+codeql-custom-queries-*/

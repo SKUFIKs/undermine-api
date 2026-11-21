@@ -45,15 +45,10 @@ server {
     proxy_send_timeout 600s;
     proxy_read_timeout 600s;
 
-{% if staging_basic_auth_enabled | bool and vault_staging_basic_auth | default('') | length > 0 %}
-    auth_basic "UnderMine staging";
-    auth_basic_user_file {{ staging_basic_auth_file }};
-{% else %}
-    # The stream gateway currently presents every client as 127.0.0.1,
-    # so an IP allowlist cannot be trusted yet. Deny API/admin access until
-    # basic auth is configured. /health and /builds/ override this below.
-    deny all;
-{% endif %}
+    # Do not put auth_basic at server level: the admin SPA sends
+    # "Authorization: Bearer ..." for /api/ requests, and that header replaces
+    # the browser's Basic credentials. Protect /admin/ with Basic, but let
+    # /api/ use the app's JWT auth.
 
     location /health {
         auth_basic off;
@@ -62,10 +57,30 @@ server {
     }
 
     location /api/ {
+        auth_basic off;
+{% if staging_ip_allowlist | default([]) | length > 0 %}
+{% for cidr in staging_ip_allowlist %}
+        allow {{ cidr }};
+{% endfor %}
+        deny all;
+{% endif %}
         proxy_pass http://api_staging_backend;
     }
 
     location /admin/ {
+{% if staging_basic_auth_enabled | bool and vault_staging_basic_auth | default('') | length > 0 %}
+        auth_basic "UnderMine staging";
+        auth_basic_user_file {{ staging_basic_auth_file }};
+{% endif %}
+{% if staging_ip_allowlist | default([]) | length > 0 %}
+        satisfy any;
+{% for cidr in staging_ip_allowlist %}
+        allow {{ cidr }};
+{% endfor %}
+        deny all;
+{% elif not (staging_basic_auth_enabled | bool and vault_staging_basic_auth | default('') | length > 0) %}
+        deny all;
+{% endif %}
         proxy_pass http://api_staging_backend;
     }
 

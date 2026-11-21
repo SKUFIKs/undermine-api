@@ -221,8 +221,14 @@ public class AdminModpackController : ControllerBase
 
         _logger.LogInformation(
             "Admin {Actor} queued modpack import {BuildId}: '{Name}' ({McVersion}, {Loader} {LoaderVersion}), source {Source}, version {ModpackVersion}",
-            actor, build.BuildId, name, mcVersion, loaderType,
-            loaderVersion, info.SourceType, staged.VersionLabel ?? staged.FileName);
+            LogSanitizer.Clean(actor),
+            LogSanitizer.Clean(build.BuildId),
+            LogSanitizer.Clean(name),
+            LogSanitizer.Clean(mcVersion),
+            LogSanitizer.Clean(loaderType),
+            LogSanitizer.Clean(loaderVersion),
+            LogSanitizer.Clean(info.SourceType),
+            LogSanitizer.Clean(staged.VersionLabel ?? staged.FileName));
 
         await _audit.LogAsync(
             actor, "import_modpack", "build", build.Id,

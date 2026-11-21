@@ -221,7 +221,8 @@ public class AdminBuildEditorController : ControllerBase
         catch (Exception ex)
         {
             TryDeleteTemp(tempPath);
-            _logger.LogError(ex, "Could not download build {BuildId} file {Path}", id, path);
+            _logger.LogError(ex, "Could not download build {BuildId} file {Path}",
+                LogSanitizer.Clean(id), LogSanitizer.Clean(path));
             return StatusCode(502, new { error = "STORAGE_UNAVAILABLE", message = "Could not read the file from storage." });
         }
 

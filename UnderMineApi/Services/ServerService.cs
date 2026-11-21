@@ -60,10 +60,12 @@ namespace UnderMineApi.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to refresh config cache after creating server {ServerName}", dto.ServerName);
+                _logger.LogWarning(ex, "Failed to refresh config cache after creating server {ServerName}",
+                    LogSanitizer.Clean(dto.ServerName));
             }
 
-            _logger.LogInformation("Server {ServerName} created by {Actor}", dto.ServerName, actor);
+            _logger.LogInformation("Server {ServerName} created by {Actor}",
+                LogSanitizer.Clean(dto.ServerName), LogSanitizer.Clean(actor));
             await _audit.LogAsync(actor, "create_server", "server", server.Id, dto.ServerName, cancellationToken);
             return (true, server, null);
         }
