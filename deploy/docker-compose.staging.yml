@@ -3,7 +3,8 @@ services:
     image: ${API_IMAGE}
     container_name: undermine-api-staging
     env_file:
-      - .env.staging
+      - path: .env.staging
+        format: raw
     network_mode: host
     environment:
       ASPNETCORE_URLS: http://127.0.0.1:5000
