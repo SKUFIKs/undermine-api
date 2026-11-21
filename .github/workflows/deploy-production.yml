@@ -63,6 +63,39 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Vault access
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("VAULT_TOKEN", "")
+          address = os.environ.get("VAULT_ADDR", "").rstrip("/")
+          if not token:
+              raise SystemExit("VAULT_TOKEN is empty")
+          if token != token.strip():
+              raise SystemExit("VAULT_TOKEN has leading/trailing whitespace")
+          if not token.startswith(("hvs.", "hvb.", "s.")):
+              raise SystemExit("VAULT_TOKEN does not look like a Vault token")
+          request = urllib.request.Request(
+              address + "/v1/kv/data/undermine-api/config",
+              headers={"X-Vault-Token": token},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print("vault_status=%d" % response.status)
+          except urllib.error.HTTPError as error:
+              raise SystemExit(
+                  "Vault read failed with HTTP %d; check token/policy/address" % error.code
+              )
+          except urllib.error.URLError as error:
+              raise SystemExit("Vault connection failed: %s" % error.reason)
+          PY
+
       - name: Install Ansible
         run: |
           pip install "ansible-core~=2.19.0" hvac
@@ -95,8 +128,7 @@ jobs:
       - name: Backup PostgreSQL
         working-directory: ansible
         run: |
-          ansible prod_primary -b -m command \
-            -a "pgbackrest --type=diff --stanza=undermine backup"
+          ansible-playbook -i inventory.ini backup.yml
 
       - name: Deploy production
         working-directory: ansible
@@ -112,5 +144,13 @@ jobs:
         env:
           API_URL: ${{ vars.API_URL }}
         run: |
+          API_URL="${API_URL%/}"
           test -n "$API_URL"
+          case "$API_URL" in
+            https://*) ;;
+            *)
+              echo "API_URL must start with https://"
+              exit 1
+              ;;
+          esac
           curl -fsS "$API_URL/health/ready"

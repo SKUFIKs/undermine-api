@@ -7,6 +7,7 @@
     "deploy_ssh_public_key": "ssh-ed25519 AAAA... you@workstation",
 
     "staging_basic_auth_enabled": false,
+    "staging_ip_allowlist": [],
 
     "s3_bucket": "undermine-builds",
     "garage_web_root_domain": "cdn.example.com",

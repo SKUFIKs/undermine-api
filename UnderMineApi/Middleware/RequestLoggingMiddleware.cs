@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using UnderMineApi.Services;
 
 namespace UnderMineApi.Middleware;
 
@@ -21,24 +22,28 @@ public class RequestLoggingMiddleware
         var requestId = Guid.NewGuid().ToString();
         context.Items["RequestId"] = requestId;
 
-        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var userAgent = context.Request.Headers.UserAgent.ToString();
+        var clientIp = LogSanitizer.Clean(context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        var method = LogSanitizer.Clean(context.Request.Method);
+        var path = LogSanitizer.Clean(context.Request.Path.ToString());
+        var userAgent = LogSanitizer.Clean(context.Request.Headers.UserAgent.ToString());
+        if (userAgent.Length > 100)
+            userAgent = userAgent[..100];
 
         using (_logger.BeginScope(new Dictionary<string, object?>
         {
             ["RequestId"] = requestId,
-            ["Method"] = context.Request.Method,
-            ["Path"] = context.Request.Path.ToString(),
+            ["Method"] = method,
+            ["Path"] = path,
             ["ClientIP"] = clientIp
         }))
         {
             _logger.LogInformation(
                 "Request started: {Method} {Path} [RequestId: {RequestId}] [ClientIP: {ClientIP}] [UserAgent: {UserAgent}]",
-                context.Request.Method,
-                context.Request.Path,
+                method,
+                path,
                 requestId,
                 clientIp,
-                userAgent.Length > 100 ? userAgent[..100] : userAgent);
+                userAgent);
 
             try
             {
@@ -50,10 +55,10 @@ public class RequestLoggingMiddleware
                 _logger.LogError(
                     ex,
                     "Request failed: {Method} {Path} [RequestId: {RequestId}] [Duration: {DurationMs}ms] [ClientIP: {ClientIP}]",
-                    context.Request.Method,
-                    context.Request.Path,
+                    method,
+                    path,
                     requestId,
-                    sw.ElapsedMilliseconds,
+                    LogSanitizer.Clean(sw.ElapsedMilliseconds),
                     clientIp);
                 throw;
             }
@@ -68,11 +73,11 @@ public class RequestLoggingMiddleware
             _logger.Log(
                 level,
                 "Request completed: {Method} {Path} [StatusCode: {StatusCode}] [RequestId: {RequestId}] [Duration: {DurationMs}ms] [ClientIP: {ClientIP}]",
-                context.Request.Method,
-                context.Request.Path,
-                statusCode,
+                method,
+                path,
+                LogSanitizer.Clean(statusCode),
                 requestId,
-                sw.ElapsedMilliseconds,
+                LogSanitizer.Clean(sw.ElapsedMilliseconds),
                 clientIp);
         }
     }

@@ -1039,7 +1039,7 @@ function importModpack(focusCurseForgeFile) {
             <label>.mrpack (Modrinth) or .zip (CurseForge) file, up to 1 GB</label>
             <input type="file" id="mp-file" accept=".mrpack,.zip,application/zip">
             <p class="hint">The format is detected from the archive contents, not from the file name.
-            CurseForge packs need <code>CurseForgeApiKey</code> in the server's .env.</p>
+            CurseForge packs need <code>CurseForge__ApiKey</code> in the server's .env.</p>
         </div>
         <div class="btn-group">
             <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>

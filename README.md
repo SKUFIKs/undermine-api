@@ -318,8 +318,7 @@ BootstrapAdminPassword=CHANGE_ME_MIN_8_CHARS
 | `Build__LogRetentionDays` | Удалять логи сборок старше N дней (`0` — не удалять) | `30` |
 | `Build__LogRetentionIntervalHours` | Интервал фоновой очистки логов | `24` |
 | `Build__LogRetentionMaxPerBuild` | Максимум строк лога на сборку (`0` — без лимита) | `0` |
-| `CurseForgeApiKey` | Ключ CurseForge API (см. [импорт модпаков](#импорт-модпаков)) | — |
-| `CurseForge__ApiKey` | То же, если задаётся как переменная окружения приложения | — |
+| `CurseForge__ApiKey` | Ключ CurseForge API (см. [импорт модпаков](#импорт-модпаков)) | — |
 
 ### Java runtime
 
@@ -1044,13 +1043,13 @@ CurseForge отдаёт файлы только по API-ключу, котор�
 <https://console.curseforge.com/>. Задать его можно так:
 
 ```env
-# в .env рядом с docker-compose.yml
-CurseForgeApiKey=$2a$10$...
+# в .env рядом с docker-compose.yml или в Vault app / app-staging
+CurseForge__ApiKey=$2a$10$...
 ```
 
-> **Важно:** символ `$` в значении нужно экранировать как `$$`, иначе docker compose
-> воспримет его как начало подстановки переменной и обрежет значение. Либо передавайте
-> ключ через `CurseForge__ApiKey` как переменную окружения.
+> **Важно:** символ `$` в значении нужно экранировать как `$$`, если ключ
+> задаётся через `.env`, который читает docker compose. В Vault и в
+> `env_file` контейнера значение хранится как есть.
 
 Без ключа импорт `.mrpack` работает как обычно, а CurseForge-архив отклоняется сразу при
 загрузке с понятной ошибкой — до запуска воркера.

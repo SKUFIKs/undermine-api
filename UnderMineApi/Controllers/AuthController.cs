@@ -63,17 +63,21 @@ public class AuthController : ControllerBase
             {
                 var options = _registrationOptions.Value;
 
-                _logger.LogInformation("Registration attempt for user {Username} from IP {IP}", request.Login, RegistrationIp.ToLogString(HttpContext.Connection.RemoteIpAddress));
+                _logger.LogInformation("Registration attempt for user {Username} from IP {IP}",
+                    LogSanitizer.Clean(request.Login),
+                    LogSanitizer.Clean(RegistrationIp.ToLogString(HttpContext.Connection.RemoteIpAddress)));
 
                 if (!ModelState.IsValid)
                 {
-                    _logger.LogWarning("Registration failed: invalid model state for user {Username}", request.Login);
+                    _logger.LogWarning("Registration failed: invalid model state for user {Username}",
+                        LogSanitizer.Clean(request.Login));
                     return BadRequest(new { status = 400, message = "Invalid request data" });
                 }
 
                 if (!PasswordPolicy.TryValidate(request.Password, out var passwordError))
                 {
-                    _logger.LogWarning("Registration failed: weak password for user {Username}: {Reason}", request.Login, passwordError);
+                    _logger.LogWarning("Registration failed: weak password for user {Username}",
+                        LogSanitizer.Clean(request.Login));
                     return BadRequest(new
                     {
                         status = 400,
@@ -89,7 +93,8 @@ public class AuthController : ControllerBase
                         out var deviceId,
                         out var deviceError))
                 {
-                    _logger.LogWarning("Registration failed: invalid device ID for user {Username}: {Reason}", request.Login, deviceError);
+                    _logger.LogWarning("Registration failed: invalid device ID for user {Username}: {Reason}",
+                        LogSanitizer.Clean(request.Login), LogSanitizer.Clean(deviceError));
                     return BadRequest(new
                     {
                         status = 400,
@@ -107,7 +112,7 @@ public class AuthController : ControllerBase
 
                 if (await _context.McAuthAccounts.AnyAsync(u => u.Username == lowerName, ct))
                 {
-                    _logger.LogWarning("Registration failed: username {Username} already exists", lowerName);
+                    _logger.LogWarning("Registration failed: username {Username} already exists", LogSanitizer.Clean(lowerName));
                     return Conflict(new
                     {
                         status = 409,
@@ -139,7 +144,9 @@ public class AuthController : ControllerBase
                 {
                     _logger.LogWarning(
                         "Registration failed: device limit reached for {DeviceId} ({Count}/{Limit})",
-                        RegistrationPolicy.MaskDeviceId(deviceId), deviceAccounts, options.MaxAccountsPerDevice);
+                        LogSanitizer.Clean(RegistrationPolicy.MaskDeviceId(deviceId)),
+                        LogSanitizer.Clean(deviceAccounts),
+                        LogSanitizer.Clean(options.MaxAccountsPerDevice));
 
                     return StatusCode(StatusCodes.Status429TooManyRequests, new
                     {
@@ -153,7 +160,9 @@ public class AuthController : ControllerBase
                 {
                     _logger.LogWarning(
                         "Registration failed: network limit reached for {IpPrefix} ({Count}/{Limit})",
-                        ipPrefix, ipAccounts, options.MaxAccountsPerIp);
+                        LogSanitizer.Clean(ipPrefix),
+                        LogSanitizer.Clean(ipAccounts),
+                        LogSanitizer.Clean(options.MaxAccountsPerIp));
 
                     return StatusCode(StatusCodes.Status429TooManyRequests, new
                     {
@@ -192,7 +201,7 @@ public class AuthController : ControllerBase
                 {
                     // The unique index is the final guard against two simultaneous registrations
                     // with the same login (the request-level check above cannot be atomic).
-                    _logger.LogWarning("Registration failed: username {Username} already exists (unique index)", lowerName);
+                    _logger.LogWarning("Registration failed: username {Username} already exists (unique index)", LogSanitizer.Clean(lowerName));
                     return Conflict(new
                     {
                         status = 409,
@@ -203,7 +212,7 @@ public class AuthController : ControllerBase
 
                 _logger.LogInformation(
                     "User {Username} (ID: {UserId}) registered successfully from {IpPrefix}",
-                    lowerName, user.Id, ipPrefix);
+                    LogSanitizer.Clean(lowerName), LogSanitizer.Clean(user.Id), LogSanitizer.Clean(ipPrefix));
 
                 return Ok(new AuthResponseDto
                 {
@@ -215,7 +224,8 @@ public class AuthController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Registration failed for user {Username}: {ErrorMessage}", request.Login, ex.Message);
+                _logger.LogError(ex, "Registration failed for user {Username}: {ErrorMessage}",
+                    LogSanitizer.Clean(request.Login), LogSanitizer.Clean(ex.Message));
                 return StatusCode(500, new { message = "Server unavailable" });
             }
         }
@@ -233,12 +243,15 @@ public class AuthController : ControllerBase
             try
             {
                 _logger.LogInformation("Login attempt for user {Username} from IP {IP}. ModelState valid: {IsValid}",
-                    request.Login, HttpContext.Connection.RemoteIpAddress, ModelState.IsValid);
+                    LogSanitizer.Clean(request.Login),
+                    LogSanitizer.Clean(HttpContext.Connection.RemoteIpAddress),
+                    LogSanitizer.Clean(ModelState.IsValid));
 
                 if (!ModelState.IsValid)
                 {
                     var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
-                    _logger.LogWarning("Login failed: invalid model state. Errors: {Errors}", string.Join(", ", errors));
+                    _logger.LogWarning("Login failed: invalid model state. Errors: {Errors}",
+                        LogSanitizer.Clean(string.Join(", ", errors)));
                     return BadRequest(new { status = 400, message = "Invalid request data" });
                 }
 
@@ -254,7 +267,7 @@ public class AuthController : ControllerBase
                     // take similar time (anti user-enumeration).
                     _passwordHasher.VerifyPassword(request.Password, DummyPasswordHash);
 
-                    _logger.LogWarning("Login failed: user {Username} not found", lowerName);
+                    _logger.LogWarning("Login failed: user {Username} not found", LogSanitizer.Clean(lowerName));
                     return Unauthorized(new
                     {
                         status = 401,
@@ -264,7 +277,8 @@ public class AuthController : ControllerBase
 
                 if (!_passwordHasher.VerifyPassword(request.Password, dbUser.HashPassword))
                 {
-                    _logger.LogWarning("Login failed: invalid password for user {Username} (ID: {UserId})", lowerName, dbUser.Id);
+                    _logger.LogWarning("Login failed: invalid password for user {Username} (ID: {UserId})",
+                        LogSanitizer.Clean(lowerName), LogSanitizer.Clean(dbUser.Id));
                     return Unauthorized(new
                     {
                         status = 401,
@@ -287,7 +301,10 @@ public class AuthController : ControllerBase
                             : $"until {DateTimeOffset.FromUnixTimeSeconds(activeBan.ExpiresAt.Value).DateTime}";
 
                         _logger.LogWarning("Login blocked: user {Username} (ID: {UserId}) is banned. Reason: {Reason}, Expires: {Expiration}",
-                            lowerName, dbUser.Id, activeBan.Reason, expirationInfo);
+                            LogSanitizer.Clean(lowerName),
+                            LogSanitizer.Clean(dbUser.Id),
+                            LogSanitizer.Clean(activeBan.Reason),
+                            LogSanitizer.Clean(expirationInfo));
 
                         return StatusCode(StatusCodes.Status403Forbidden, new
                         {
@@ -307,7 +324,8 @@ public class AuthController : ControllerBase
 
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("User {Username} (ID: {UserId}) logged in successfully from IP {IP}", lowerName, dbUser.Id, ip);
+                _logger.LogInformation("User {Username} (ID: {UserId}) logged in successfully from IP {IP}",
+                    LogSanitizer.Clean(lowerName), LogSanitizer.Clean(dbUser.Id), LogSanitizer.Clean(ip));
 
                 return Ok(new LoginResponseDto
                 {
@@ -320,7 +338,7 @@ public class AuthController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Login failed: {ErrorMessage}", ex.Message);
+                _logger.LogError(ex, "Login failed: {ErrorMessage}", LogSanitizer.Clean(ex.Message));
                 return StatusCode(500, new
                 {
                     status = 500,
@@ -338,13 +356,7 @@ public class AuthController : ControllerBase
         {
             try
             {
-                if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith("Bearer "))
-                {
-                    _logger.LogWarning("Token validation failed: missing or invalid Authorization header");
-                    return Unauthorized(new { valid = false, message = "Bearer token required" });
-                }
-
-                var token = authorization.Substring("Bearer ".Length).Trim();
+                var token = ExtractBearerToken(authorization);
 
                 var principal = _jwtService.ValidateToken(token);
 
@@ -363,7 +375,7 @@ public class AuthController : ControllerBase
 
                 if (!access.Exists)
                 {
-                    _logger.LogWarning("Token validation failed: user {UserId} no longer exists", userId);
+                    _logger.LogWarning("Token validation failed: user {UserId} no longer exists", LogSanitizer.Clean(userId));
                     return Unauthorized(new
                     {
                         valid = false,
@@ -378,7 +390,7 @@ public class AuthController : ControllerBase
                         ? "permanently"
                         : $"until {DateTimeOffset.FromUnixTimeSeconds(access.Ban.ExpiresAt.Value).UtcDateTime:u} UTC";
 
-                    _logger.LogWarning("Token validation blocked: user {UserId} is banned", userId);
+                    _logger.LogWarning("Token validation blocked: user {UserId} is banned", LogSanitizer.Clean(userId));
 
                     return StatusCode(StatusCodes.Status403Forbidden, new
                     {
@@ -397,7 +409,7 @@ public class AuthController : ControllerBase
                 {
                     _logger.LogWarning(
                         "Token validation failed: role for user {UserId} changed from {TokenRole} to {CurrentRole}",
-                        userId, tokenRole, access.Role);
+                        LogSanitizer.Clean(userId), LogSanitizer.Clean(tokenRole), LogSanitizer.Clean(access.Role));
 
                     return Unauthorized(new
                     {
@@ -413,7 +425,7 @@ public class AuthController : ControllerBase
                 {
                     _logger.LogWarning(
                         "Token validation failed: token version {TokenVersion} for user {UserId} is stale (current {CurrentVersion})",
-                        tokenVersion, userId, access.TokenVersion);
+                        LogSanitizer.Clean(tokenVersion), LogSanitizer.Clean(userId), LogSanitizer.Clean(access.TokenVersion));
 
                     return Unauthorized(new
                     {
@@ -423,7 +435,7 @@ public class AuthController : ControllerBase
                     });
                 }
 
-                _logger.LogInformation("Token validated successfully for user {UserId}", userId);
+                _logger.LogInformation("Token validated successfully for user {UserId}", LogSanitizer.Clean(userId));
 
                 return Ok(new ValidationResponseDto
                 {
@@ -433,9 +445,20 @@ public class AuthController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Token validation failed: {ErrorMessage}", ex.Message);
+                _logger.LogWarning(ex, "Token validation failed: {ErrorMessage}", LogSanitizer.Clean(ex.Message));
                 return Unauthorized(new { valid = false, message = "Invalid or expired token" });
             }
         }
+    }
+
+    private static string ExtractBearerToken(string? authorization)
+    {
+        if (string.IsNullOrWhiteSpace(authorization))
+            return string.Empty;
+
+        var value = authorization.Trim();
+        return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? value["Bearer ".Length..].Trim()
+            : value;
     }
 }

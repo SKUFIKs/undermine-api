@@ -44,7 +44,7 @@ namespace UnderMineApi.Controllers
             _audit = audit;
         }
 
-        private string GetActor() => User?.Identity?.Name ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "system";
+        private string GetActor() => LogSanitizer.Clean(User?.Identity?.Name ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "system");
 
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers([FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken cancellationToken = default)
@@ -66,7 +66,7 @@ namespace UnderMineApi.Controllers
             using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
             {
                 if (string.IsNullOrWhiteSpace(query)) return BadRequest();
-                _logger.LogInformation("Admin {Actor} searching users with query: {Query}", GetActor(), query);
+                _logger.LogInformation("Admin {Actor} searching users with query: {Query}", GetActor(), LogSanitizer.Clean(query));
                 var users = await _userService.SearchUsersAsync(query, 10, cancellationToken);
                 _logger.LogInformation("Admin {Actor} completed user search", GetActor());
                 return Ok(users);
@@ -80,7 +80,8 @@ namespace UnderMineApi.Controllers
             using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
             {
                 var actor = GetActor();
-                _logger.LogInformation("Admin {Actor} banning user {UserId}. Reason: {Reason}, Duration: {Duration} days", actor, id, request.Reason, request.DurationDays);
+                _logger.LogInformation("Admin {Actor} banning user {UserId}. Reason: {Reason}, Duration: {Duration} days",
+                    actor, LogSanitizer.Clean(id), LogSanitizer.Clean(request.Reason), LogSanitizer.Clean(request.DurationDays));
                 var result = await _userService.BanUserAsync(id, request, actor, cancellationToken);
                 if (!result.Success) return result.ToActionResult();
                 _logger.LogInformation("Admin {Actor} successfully banned user {UserId}", actor, id);
@@ -114,7 +115,7 @@ namespace UnderMineApi.Controllers
 
                 var actor = GetActor();
 
-                _logger.LogInformation("Admin {Actor} changing role for user {UserId} to {NewRole}", actor, id, request.Role);
+                _logger.LogInformation("Admin {Actor} changing role for user {UserId} to {NewRole}", actor, LogSanitizer.Clean(id), LogSanitizer.Clean(request.Role));
 
                 var result = await _userService.ChangeUserRoleAsync(id, request.Role, actor, cancellationToken);
 
@@ -128,7 +129,7 @@ namespace UnderMineApi.Controllers
 
                     if (result.Error == "INVALID_ROLE")
                     {
-                        _logger.LogWarning("Admin {Actor} failed to change role: invalid role {Role}", actor, request.Role);
+                        _logger.LogWarning("Admin {Actor} failed to change role: invalid role {Role}", actor, LogSanitizer.Clean(request.Role));
                         return BadRequest(new { Error = result.Error, Message = "Invalid role. Available roles: 'admin', 'user'." });
                     }
 
@@ -136,7 +137,7 @@ namespace UnderMineApi.Controllers
                     return StatusCode(500, new { Error = "INTERNAL_ERROR", Message = "An internal server error occurred." });
                 }
 
-                _logger.LogInformation("Admin {Actor} successfully changed role for user {UserId} to {NewRole}", actor, id, request.Role.ToLower());
+                _logger.LogInformation("Admin {Actor} successfully changed role for user {UserId} to {NewRole}", actor, LogSanitizer.Clean(id), LogSanitizer.Clean(request.Role.ToLower()));
                 return Ok(new { Message = $"User role successfully changed to {request.Role.ToLower()}" });
             }
         }
@@ -181,7 +182,7 @@ namespace UnderMineApi.Controllers
             {
                 var actor = GetActor();
 
-                _logger.LogInformation("Admin {Actor} creating server: {ServerName}", actor, dto.ServerName);
+                _logger.LogInformation("Admin {Actor} creating server: {ServerName}", actor, LogSanitizer.Clean(dto.ServerName));
 
                 var (success, server, error) = await _serverService.CreateServerAsync(dto, actor, cancellationToken);
 
@@ -189,23 +190,24 @@ namespace UnderMineApi.Controllers
                 {
                     if (error == "SERVER_ALREADY_EXISTS")
                     {
-                        _logger.LogWarning("Admin {Actor} failed to create server: server {ServerName} already exists", actor, dto.ServerName);
+                        _logger.LogWarning("Admin {Actor} failed to create server: server {ServerName} already exists", actor, LogSanitizer.Clean(dto.ServerName));
                         return Conflict(new { Error = error, Message = "A server with this name already exists." });
                     }
 
                     if (error == "BUILD_NOT_FOUND")
                     {
-                        _logger.LogWarning("Admin {Actor} failed to create server {ServerName}: build {BuildId} not found", actor, dto.ServerName, dto.BuildId);
+                        _logger.LogWarning("Admin {Actor} failed to create server {ServerName}: build {BuildId} not found",
+                            actor, LogSanitizer.Clean(dto.ServerName), LogSanitizer.Clean(dto.BuildId));
                         return BadRequest(new { Error = error, Message = "The selected build does not exist or is not completed yet." });
                     }
 
-                    _logger.LogError("Admin {Actor} failed to create server {ServerName}: {Error}", actor, dto.ServerName, error);
+                    _logger.LogError("Admin {Actor} failed to create server {ServerName}: {Error}", actor, LogSanitizer.Clean(dto.ServerName), LogSanitizer.Clean(error));
                     return StatusCode(500, new { Error = "INTERNAL_ERROR" });
                 }
 
                 await _cache.RefreshCacheAsync();
 
-                _logger.LogInformation("Admin {Actor} successfully created server: {ServerName}", actor, dto.ServerName);
+                _logger.LogInformation("Admin {Actor} successfully created server: {ServerName}", actor, LogSanitizer.Clean(dto.ServerName));
                 return Ok(server);
             }
         }
@@ -218,7 +220,7 @@ namespace UnderMineApi.Controllers
             {
                 var actor = GetActor();
 
-                _logger.LogInformation("Admin {Actor} updating server {ServerId}: {ServerName}", actor, id, dto.ServerName);
+                _logger.LogInformation("Admin {Actor} updating server {ServerId}: {ServerName}", actor, LogSanitizer.Clean(id), LogSanitizer.Clean(dto.ServerName));
 
                 var result = await _serverService.UpdateServerAsync(id, dto, actor, cancellationToken);
 
@@ -230,7 +232,7 @@ namespace UnderMineApi.Controllers
 
                 await _cache.RefreshCacheAsync();
 
-                _logger.LogInformation("Admin {Actor} successfully updated server {ServerId}: {ServerName}", actor, id, dto.ServerName);
+                _logger.LogInformation("Admin {Actor} successfully updated server {ServerId}: {ServerName}", actor, LogSanitizer.Clean(id), LogSanitizer.Clean(dto.ServerName));
                 return Ok(new { Message = "Server updated" });
             }
         }

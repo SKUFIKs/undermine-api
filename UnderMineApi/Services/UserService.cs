@@ -167,7 +167,8 @@ namespace UnderMineApi.Services
             // request forces a fresh check (and a re-login for the affected user).
             _access.Invalidate(id);
 
-            _logger.LogInformation("Role for user {UserId} changed from {OldRole} to {NewRole} by {Actor}", id, oldRole, normalizedRole, actor);
+            _logger.LogInformation("Role for user {UserId} changed from {OldRole} to {NewRole} by {Actor}",
+                LogSanitizer.Clean(id), LogSanitizer.Clean(oldRole), LogSanitizer.Clean(normalizedRole), LogSanitizer.Clean(actor));
 
             await _audit.LogAsync(actor, "change_role", "user", id, $"Role changed from {oldRole} to {normalizedRole}", cancellationToken);
 

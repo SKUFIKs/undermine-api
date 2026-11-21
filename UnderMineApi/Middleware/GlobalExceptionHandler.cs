@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Diagnostics;
+using UnderMineApi.Services;
 
 namespace UnderMineApi.Middleware
 {
@@ -9,27 +10,30 @@ namespace UnderMineApi.Middleware
             Exception exception,
             CancellationToken cancellationToken)
         {
-            var requestId = httpContext.Items.ContainsKey("RequestId")
+            var requestId = LogSanitizer.Clean(httpContext.Items.ContainsKey("RequestId")
                 ? httpContext.Items["RequestId"]?.ToString()
-                : Guid.NewGuid().ToString();
+                : Guid.NewGuid().ToString());
 
-            var clientIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var method = LogSanitizer.Clean(httpContext.Request.Method);
+            var path = LogSanitizer.Clean(httpContext.Request.Path.ToString());
+            var clientIp = LogSanitizer.Clean(httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+            var exceptionType = LogSanitizer.Clean(exception.GetType().Name);
 
             using (logger.BeginScope(new Dictionary<string, object?>
             {
                 ["RequestId"] = requestId,
-                ["Method"] = httpContext.Request.Method,
-                ["Path"] = httpContext.Request.Path.ToString(),
+                ["Method"] = method,
+                ["Path"] = path,
                 ["ClientIP"] = clientIp
             }))
             {
                 logger.LogError(
                     exception,
                     "Unhandled exception: {Method} {Path} [RequestId: {RequestId}] [Exception: {ExceptionType}] [ClientIP: {ClientIP}]",
-                    httpContext.Request.Method,
-                    httpContext.Request.Path,
+                    method,
+                    path,
                     requestId,
-                    exception.GetType().Name,
+                    exceptionType,
                     clientIp);
             }
 

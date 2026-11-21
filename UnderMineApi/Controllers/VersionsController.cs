@@ -49,7 +49,7 @@ namespace UnderMineApi.Controllers
             var response = await _catalog.GetMinecraftVersionsAsync(loader, includePrerelease, ct);
 
             _logger.LogInformation("Listed {Count} Minecraft versions for {Loader} (snapshots: {Snapshots})",
-                response.Versions.Count, response.Loader, includePrerelease);
+                LogSanitizer.Clean(response.Versions.Count), LogSanitizer.Clean(response.Loader), LogSanitizer.Clean(includePrerelease));
 
             return Ok(response);
         }
@@ -78,7 +78,7 @@ namespace UnderMineApi.Controllers
             var response = await _catalog.GetLoaderVersionsAsync(loader, mcVersion.Trim(), includePrerelease, ct);
 
             _logger.LogInformation("Listed {Count} {Loader} builds for Minecraft {McVersion}",
-                response.Versions.Count, response.Loader, response.MinecraftVersion);
+                LogSanitizer.Clean(response.Versions.Count), LogSanitizer.Clean(response.Loader), LogSanitizer.Clean(response.MinecraftVersion));
 
             return Ok(response);
         }

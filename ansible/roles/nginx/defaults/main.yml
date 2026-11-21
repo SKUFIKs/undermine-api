@@ -16,5 +16,8 @@ cloudflare_credentials_file: /root/.secrets/cloudflare-api.ini
 staging_basic_auth_enabled: false
 staging_basic_auth_user: admin
 staging_basic_auth_file: /etc/nginx/.htpasswd-staging
+# Optional extra restriction for /api/ (and an alternative to Basic for
+# /admin/). Keep empty to let the app's JWT auth protect admin API calls.
+staging_ip_allowlist: []
 # Staging bucket served under /builds/ by the staging vhost.
 garage_staging_bucket: undermine-staging-builds

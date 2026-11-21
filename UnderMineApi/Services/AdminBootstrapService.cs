@@ -42,10 +42,11 @@ namespace UnderMineApi.Services
 
     /// <summary>
     /// Guarantees the admin panel is reachable on a fresh installation: when no admin account
-    /// exists yet, one is created with a randomly generated login and password and the
-    /// credentials are printed to the log. That removes the "psql by hand before the first login"
-    /// step without ever shipping a hard-coded default password.
-    ///
+    /// exists yet, one is created with a randomly generated login and password. The credentials
+    /// are written to a root-only file (BootstrapAdmin:CredentialsFile) instead of the log. That
+    /// removes the "psql by hand before the first login" step without ever shipping a hard-coded
+    /// default password.
+    /// 
     /// Configuration (all optional):
     ///   BootstrapAdmin__Enabled   - set to false to turn the whole thing off (default true).
     ///   BootstrapAdmin__Username  - fixed login instead of a generated one.
@@ -58,9 +59,9 @@ namespace UnderMineApi.Services
     /// </summary>
     public class AdminBootstrapService : IAdminBootstrapService
     {
-        // Ambiguous glyphs are left out so a generated password can be copied by hand from a log
-        // line without introducing O/0, l/1 or I mistakes. '$' is excluded on purpose: it is the
-        // interpolation character of docker compose / .env and would be mangled there.
+        // Ambiguous glyphs are left out so a generated password can be copied by hand from the
+        // credentials file without introducing O/0, l/1 or I mistakes. '$' is excluded on purpose:
+        // it is the interpolation character of docker compose / .env and would be mangled there.
         private const string LowerChars = "abcdefghijkmnopqrstuvwxyz";
         private const string UpperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
         private const string DigitChars = "23456789";
@@ -200,16 +201,36 @@ namespace UnderMineApi.Services
                 _context.McAuthAccounts.Add(BuildAccount(login, login, _hasher.HashPassword(password)));
                 await _context.SaveChangesAsync(ct);
 
-                _logger.LogWarning(
-                    "\n" +
-                    "======================== DEFAULT ADMIN CREATED ========================\n" +
-                    " Login:    {Login}\n" +
-                    " Password: {Password}\n" +
-                    " Sign in to the admin panel with these credentials. They are shown only\n" +
-                    " once - store them now. Lost? Set BootstrapAdmin__Username and\n" +
-                    " BootstrapAdmin__Password in .env and restart to reset the account.\n" +
-                    "=====================================================================",
-                    login, password);
+                var credentialsFile = _config["BootstrapAdmin:CredentialsFile"]
+                    ?? Path.Combine(AppContext.BaseDirectory, "bootstrap-admin.txt");
+
+                try
+                {
+                    await File.WriteAllTextAsync(
+                        credentialsFile,
+                        $"Login: {login}{Environment.NewLine}Password: {password}{Environment.NewLine}",
+                        ct);
+
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        File.SetUnixFileMode(
+                            credentialsFile,
+                            UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+
+                    _logger.LogWarning(
+                        "DEFAULT ADMIN CREATED. Login: {Login}. Password written to {CredentialsFile}. Read it and delete the file.",
+                        LogSanitizer.Clean(login),
+                        LogSanitizer.Clean(credentialsFile));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "DEFAULT ADMIN CREATED for {Login}, but the credentials file could not be written. " +
+                        "Set BootstrapAdmin__Username/Password and restart.",
+                        LogSanitizer.Clean(login));
+                }
 
                 return new BootstrapAdminResult
                 {

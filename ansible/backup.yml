@@ -1,0 +1,11 @@
+---
+- name: Create a pgBackRest diff backup before deployment
+  hosts: prod_dr
+  become: true
+  become_user: postgres
+  gather_facts: false
+
+  tasks:
+    - name: Run pgBackRest diff backup
+      ansible.builtin.command: pgbackrest --type=diff --stanza=undermine backup
+      changed_when: true

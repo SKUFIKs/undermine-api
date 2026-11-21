@@ -229,7 +229,8 @@ Environment: `staging`.
 1. checkout `git_ref` / выбранной ветки;
 2. проверяет `confirm` и `image_tag`;
 3. ставит Ansible, пишет SSH-ключ, inventory и `group_vars/all/main.yml`;
-4. делает `pgbackrest --type=diff --stanza=undermine backup`;
+4. делает `ansible-playbook -i inventory.ini backup.yml`
+   (pgBackRest diff backup на prod-3, от имени postgres);
 5. выполняет:
    ```bash
    ansible-playbook -i inventory.ini playbook.yml \
