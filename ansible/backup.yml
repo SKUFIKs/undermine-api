@@ -8,4 +8,8 @@
   tasks:
     - name: Run pgBackRest diff backup
       ansible.builtin.command: pgbackrest --type=diff --stanza=undermine backup
+      register: pgbackrest_backup
+      retries: 6
+      delay: 10
+      until: pgbackrest_backup.rc == 0
       changed_when: true
