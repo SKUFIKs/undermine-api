@@ -68,6 +68,45 @@ namespace UnderMineApi.DTOs
     }
 
     /// <summary>
+    /// Aggregated address a user authenticated from. <see cref="SeenCount"/> includes the
+    /// registration address and every successful login from that address.
+    /// </summary>
+    public class AdminUserIpDto
+    {
+        public string Ip { get; set; } = string.Empty;
+        public long FirstSeen { get; set; }
+        public long LastSeen { get; set; }
+        public int SeenCount { get; set; }
+    }
+
+    /// <summary>Personal account statistics shown in the admin user-details dialog.</summary>
+    public class AdminUserStatisticsDto
+    {
+        public long Id { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string RealName { get; set; } = string.Empty;
+        public string Uuid { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public string? Email { get; set; }
+
+        public long RegDate { get; set; }
+        public long? LastLogin { get; set; }
+        public string? RegIp { get; set; }
+        public string? LastIp { get; set; }
+
+        public long PlayTime { get; set; }
+        public int Murders { get; set; }
+        public int Deaths { get; set; }
+
+        public bool IsBanned { get; set; }
+        public string? BanReason { get; set; }
+        public long? BanExpiresAt { get; set; }
+        public string? BannedBy { get; set; }
+
+        public List<AdminUserIpDto> IpHistory { get; set; } = new();
+    }
+
+    /// <summary>
     /// Server configuration links as exposed to the admin panel.
     /// "LoaderVersion" is the loader version (stored as TypeVersion in the database).
     /// </summary>

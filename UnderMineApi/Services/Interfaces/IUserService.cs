@@ -1,4 +1,5 @@
 using UnderMineApi.DTOs;
+using UnderMineApi.Domain.Entities;
 using UnderMineApi.Models;
 
 namespace UnderMineApi.Services.Interfaces
@@ -30,6 +31,25 @@ namespace UnderMineApi.Services.Interfaces
             string reason,
             long actorUserId,
             string actor,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>Updates the last-login fields and records the address used for this login.</summary>
+        Task RecordLoginAsync(
+            UserAccount user,
+            string? ip,
+            long loginAt,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>Records an address without touching the account's last-login fields.</summary>
+        Task RecordIpAsync(
+            long userId,
+            string? ip,
+            long seenAt,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>Personal statistics for the admin user-details dialog, or null when missing.</summary>
+        Task<AdminUserStatisticsDto?> GetUserStatisticsAsync(
+            long id,
             CancellationToken cancellationToken = default);
 
         /// <summary>Changes the caller's own password (requires the current one) and revokes old tokens.</summary>

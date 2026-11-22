@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Data;
+using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Models;
 using UnderMineApi.Services.Interfaces;
@@ -10,6 +11,8 @@ namespace UnderMineApi.Services
 {
     public class UserService : IUserService
     {
+        private const int MaxIpHistoryEntries = 50;
+
         private readonly AppDbContext _context;
         private readonly IPasswordHasher _hasher;
         private readonly ILogger<UserService> _logger;
@@ -238,6 +241,10 @@ namespace UnderMineApi.Services
                     .Where(b => b.UserId == id)
                     .ExecuteDeleteAsync(cancellationToken);
 
+                await _context.UserIpHistory
+                    .Where(h => h.UserId == id)
+                    .ExecuteDeleteAsync(cancellationToken);
+
                 await _context.UserData
                     .Where(s => s.AccountId == id)
                     .ExecuteDeleteAsync(cancellationToken);
@@ -283,6 +290,148 @@ namespace UnderMineApi.Services
                 id, username, actorName, cleanReason);
 
             return (true, null);
+        }
+
+        public async Task RecordLoginAsync(
+            UserAccount user,
+            string? ip,
+            long loginAt,
+            CancellationToken cancellationToken = default)
+        {
+            user.Ip = ip;
+            user.LastLogin = loginAt;
+
+            if (string.IsNullOrWhiteSpace(ip))
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
+            // The user is tracked by the same scoped context, so RecordIpAsync saves the
+            // last-login fields and the IP row together.
+            await RecordIpAsync(user.Id, ip, loginAt, cancellationToken);
+        }
+
+        public async Task RecordIpAsync(
+            long userId,
+            string? ip,
+            long seenAt,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(ip))
+                return;
+
+            var normalizedIp = ip.Trim();
+            var history = await _context.UserIpHistory
+                .FirstOrDefaultAsync(h => h.UserId == userId && h.Ip == normalizedIp, cancellationToken);
+
+            if (history == null)
+            {
+                _context.UserIpHistory.Add(new UserIpHistory
+                {
+                    UserId = userId,
+                    Ip = normalizedIp,
+                    FirstSeen = seenAt,
+                    LastSeen = seenAt,
+                    SeenCount = 1
+                });
+            }
+            else
+            {
+                history.LastSeen = seenAt;
+                history.SeenCount++;
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await TrimIpHistoryAsync(userId, cancellationToken);
+        }
+
+        private async Task TrimIpHistoryAsync(long userId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var staleIds = await _context.UserIpHistory
+                    .Where(h => h.UserId == userId)
+                    .OrderByDescending(h => h.LastSeen)
+                    .ThenByDescending(h => h.Id)
+                    .Skip(MaxIpHistoryEntries)
+                    .Select(h => h.Id)
+                    .ToListAsync(cancellationToken);
+
+                if (staleIds.Count == 0) return;
+
+                await _context.UserIpHistory
+                    .Where(h => staleIds.Contains(h.Id))
+                    .ExecuteDeleteAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // Cleanup is best-effort; it must never break a successful login.
+                _logger.LogWarning(ex, "Failed to trim IP history for user {UserId}", userId);
+            }
+        }
+
+        public async Task<AdminUserStatisticsDto?> GetUserStatisticsAsync(
+            long id,
+            CancellationToken cancellationToken = default)
+        {
+            var user = await _context.McAuthAccounts
+                .AsNoTracking()
+                .Where(u => u.Id == id)
+                .Select(u => new AdminUserStatisticsDto
+                {
+                    Id = u.Id,
+                    Username = u.Username,
+                    RealName = u.RealName,
+                    Uuid = u.Uuid,
+                    Role = u.Role,
+                    Email = u.Email,
+                    RegDate = u.RegDate,
+                    LastLogin = u.LastLogin,
+                    RegIp = u.RegIp,
+                    LastIp = u.Ip,
+                    PlayTime = u.Stats != null ? u.Stats.PlayTime : 0,
+                    Murders = u.Stats != null ? u.Stats.Murders : 0,
+                    Deaths = u.Stats != null ? u.Stats.Deaths : 0
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (user == null) return null;
+
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var ban = await _context.UserBans
+                .AsNoTracking()
+                .Where(b => b.UserId == id &&
+                            b.IsActive &&
+                            (b.ExpiresAt == null || b.ExpiresAt > now))
+                .OrderByDescending(b => b.CreatedAt)
+                .Select(b => new { b.Reason, b.ExpiresAt, b.BannedBy })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (ban != null)
+            {
+                user.IsBanned = true;
+                user.BanReason = ban.Reason;
+                user.BanExpiresAt = ban.ExpiresAt;
+                user.BannedBy = ban.BannedBy;
+            }
+
+            user.IpHistory = await _context.UserIpHistory
+                .AsNoTracking()
+                .Where(h => h.UserId == id)
+                .OrderByDescending(h => h.LastSeen)
+                .ThenByDescending(h => h.Id)
+                .Take(MaxIpHistoryEntries)
+                .Select(h => new AdminUserIpDto
+                {
+                    Ip = h.Ip,
+                    FirstSeen = h.FirstSeen,
+                    LastSeen = h.LastSeen,
+                    SeenCount = h.SeenCount
+                })
+                .ToListAsync(cancellationToken);
+
+            return user;
         }
 
         public async Task<(bool Success, string? Error)> BanUserAsync(long id, BanRequestDto request, string actor, CancellationToken cancellationToken = default)

@@ -126,6 +126,9 @@ services:
 
 - Admin (требуется роль `Admin` в JWT claims)
   - `GET /api/v1.0/admin/users` — список пользователей (пагинация).
+  - `GET /api/v1.0/admin/users/{id}/statistics` — персональная статистика:
+    дата регистрации, последний вход, playtime, убийства/смерти, текущий бан
+    и история IP-адресов с датами первого/последнего входа и количеством входов.
   - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя.
   - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя.
   - `POST /api/v1.0/admin/users/{id}/delete` — безвозвратное удаление аккаунта:

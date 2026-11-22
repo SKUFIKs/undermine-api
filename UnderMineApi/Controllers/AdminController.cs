@@ -81,6 +81,22 @@ namespace UnderMineApi.Controllers
             }
         }
 
+        [HttpGet("users/{id:long}/statistics")]
+        public async Task<IActionResult> GetUserStatistics(long id, CancellationToken cancellationToken = default)
+        {
+            var requestId = HttpContext.Items.ContainsKey("RequestId") ? HttpContext.Items["RequestId"]?.ToString() : null;
+            using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
+            {
+                _logger.LogInformation("Admin {Actor} fetching statistics for user {UserId}", GetActor(), id);
+
+                var statistics = await _userService.GetUserStatisticsAsync(id, cancellationToken);
+                if (statistics == null)
+                    return NotFound(new { Error = "USER_NOT_FOUND", Message = "User not found." });
+
+                return Ok(statistics);
+            }
+        }
+
         [HttpPost("users/{id}/ban")]
         public async Task<IActionResult> BanUser(long id, [FromBody] BanRequestDto request, CancellationToken cancellationToken = default)
         {

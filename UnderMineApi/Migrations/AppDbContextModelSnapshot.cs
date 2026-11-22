@@ -426,6 +426,47 @@ namespace UnderMineApi.Migrations
                     b.ToTable("user_accounts");
                 });
 
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.UserIpHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("FirstSeen")
+                        .HasColumnType("bigint")
+                        .HasColumnName("first_seen");
+
+                    b.Property<string>("Ip")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ip");
+
+                    b.Property<long>("LastSeen")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_seen");
+
+                    b.Property<int>("SeenCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("seen_count");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Ip")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "LastSeen");
+
+                    b.ToTable("user_ip_history", (string)null);
+                });
+
             modelBuilder.Entity("UnderMineApi.Models.AdminAudit", b =>
                 {
                     b.Property<long>("Id")
@@ -665,6 +706,15 @@ namespace UnderMineApi.Migrations
                         .IsRequired();
 
                     b.Navigation("BuildPreset");
+                });
+
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.UserIpHistory", b =>
+                {
+                    b.HasOne("UnderMineApi.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("UnderMineApi.Models.ServerConfigDetails", b =>

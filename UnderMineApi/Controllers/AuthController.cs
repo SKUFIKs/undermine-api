@@ -28,6 +28,7 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly IJwtService _jwtService;
     private readonly IUserAccessService _access;
+    private readonly IUserService _userService;
     private readonly IOptions<RegistrationOptions> _registrationOptions;
     private readonly IPasswordHasher _passwordHasher;
 
@@ -41,6 +42,7 @@ public class AuthController : ControllerBase
         ILogger<AuthController> logger,
         IJwtService jwtService,
         IUserAccessService access,
+        IUserService userService,
         IOptions<RegistrationOptions> registrationOptions,
         IPasswordHasher passwordHasher)
     {
@@ -48,6 +50,7 @@ public class AuthController : ControllerBase
         _logger = logger;
         _jwtService = jwtService;
         _access = access;
+        _userService = userService;
         _registrationOptions = registrationOptions;
         _passwordHasher = passwordHasher;
     }
@@ -172,6 +175,8 @@ public class AuthController : ControllerBase
                     });
                 }
 
+                var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
                 var user = new UnderMineApi.Domain.Entities.UserAccount
                 {
                     Username = lowerName,
@@ -181,7 +186,7 @@ public class AuthController : ControllerBase
                     RegIp = ip,
                     RegIpPrefix = ipPrefix,
                     DeviceId = deviceId,
-                    RegDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    RegDate = now,
                     Stats = new UnderMineApi.Models.UserData
                     {
                         PlayTime = 0,
@@ -195,6 +200,12 @@ public class AuthController : ControllerBase
                 try
                 {
                     await _context.SaveChangesAsync(ct);
+
+                    // Record the registration address in the same transaction; the account
+                    // row now has its generated ID.
+                    if (!string.IsNullOrEmpty(ip))
+                        await _userService.RecordIpAsync(user.Id, ip, now, ct);
+
                     await transaction.CommitAsync(ct);
                 }
                 catch (DbUpdateException ex) when (IsUniqueViolation(ex))
@@ -255,7 +266,8 @@ public class AuthController : ControllerBase
                     return BadRequest(new { status = 400, message = "Invalid request data" });
                 }
 
-                string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+                var loginAddress = RegistrationIp.Normalize(HttpContext.Connection.RemoteIpAddress);
+                string ip = loginAddress?.ToString() ?? string.Empty;
 
                 var lowerName = request.Login.Trim().ToLowerInvariant();
 
@@ -317,12 +329,10 @@ public class AuthController : ControllerBase
                     }
                 }
 
+                var loginAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                await _userService.RecordLoginAsync(dbUser, ip, loginAt, HttpContext.RequestAborted);
+
                 var token = _jwtService.GenerateToken(dbUser);
-
-                dbUser.Ip = ip;
-                dbUser.LastLogin = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-                await _context.SaveChangesAsync();
 
                 _logger.LogInformation("User {Username} (ID: {UserId}) logged in successfully from IP {IP}",
                     LogSanitizer.Clean(lowerName), LogSanitizer.Clean(dbUser.Id), LogSanitizer.Clean(ip));

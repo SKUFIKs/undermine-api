@@ -9,6 +9,7 @@ namespace UnderMineApi.Data
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<UnderMineApi.Domain.Entities.UserAccount> McAuthAccounts { get; set; }
+        public DbSet<UnderMineApi.Domain.Entities.UserIpHistory> UserIpHistory => Set<UnderMineApi.Domain.Entities.UserIpHistory>();
         public DbSet<ServerManifest> ServerManifests => Set<ServerManifest>();
         public DbSet<UserBans> UserBans => Set<UserBans>();
         public DbSet<UserData> UserData => Set<UserData>();
@@ -41,6 +42,19 @@ namespace UnderMineApi.Data
                 entity.HasOne(u => u.Stats)
                       .WithOne(s => s.Account)
                       .HasForeignKey<UserData>(s => s.AccountId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<UserIpHistory>(entity =>
+            {
+                entity.ToTable("user_ip_history");
+                entity.Property(h => h.Ip).HasMaxLength(64);
+                entity.HasIndex(h => new { h.UserId, h.Ip }).IsUnique();
+                entity.HasIndex(h => new { h.UserId, h.LastSeen });
+
+                entity.HasOne<UserAccount>()
+                      .WithMany()
+                      .HasForeignKey(h => h.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
             });
 

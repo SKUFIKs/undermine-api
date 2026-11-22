@@ -66,6 +66,7 @@ public class UserDeletionTests : IDisposable
         Assert.Null(await _context.McAuthAccounts.FindAsync(user.Id));
         Assert.Empty(await _context.UserData.Where(s => s.AccountId == user.Id).ToListAsync());
         Assert.Empty(await _context.UserBans.Where(b => b.UserId == user.Id).ToListAsync());
+        Assert.Empty(await _context.UserIpHistory.Where(h => h.UserId == user.Id).ToListAsync());
         Assert.Contains(user.Id, _access.Invalidated);
 
         var audit = await _context.AdminAudits.SingleAsync();
@@ -184,6 +185,14 @@ public class UserDeletionTests : IDisposable
             BannedBy = "root",
             CreatedAt = 1,
             IsActive = true
+        });
+        _context.UserIpHistory.Add(new UserIpHistory
+        {
+            UserId = user.Id,
+            Ip = "203.0.113.10",
+            FirstSeen = 1,
+            LastSeen = 1,
+            SeenCount = 1
         });
         await _context.SaveChangesAsync();
 
