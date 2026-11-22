@@ -11,6 +11,40 @@ let searchTimer = null;
 let userQuery = '';
 let serverBuilds = []; // completed builds offered by the server-modal build picker
 
+// Activity log filtering/paging state.
+let activityPage = 1;
+let activityTotalPages = 0;
+const activityPageSize = 25;
+let activityQuery = '';
+let activityAction = '';
+let activityActor = '';
+let activityDays = 0;
+let activitySearchTimer = null;
+let evidenceObjectUrl = null;
+
+// Effective access of the signed-in account, loaded from /admin/me. The admin role always
+// has every permission; moderator/user permissions are configured in Settings.
+let myPermissions = new Set();
+let myRole = '';
+let isAdmin = false;
+
+function can(permission) {
+    return isAdmin || myPermissions.has(permission);
+}
+
+function roleRank(role) {
+    switch (String(role || '').toLowerCase()) {
+        case 'admin': return 3;
+        case 'moderator': return 2;
+        case 'user': return 1;
+        default: return 0;
+    }
+}
+
+function canManageRole(role) {
+    return isAdmin || roleRank(role) <= roleRank(myRole);
+}
+
 // Build editor state (modal). The file list is loaded once per build and kept in memory;
 // editing a file updates both the list entry and the stored manifest through the API.
 let editorBuild = null;
@@ -37,6 +71,67 @@ function esc(value) {
         .replace(/'/g, '&#39;');
 }
 
+function roleStatusClass(role) {
+    const value = String(role || '').toLowerCase();
+    if (value === 'admin') return 'status-role-admin';
+    if (value === 'moderator') return 'status-role-moderator';
+    return 'status-role-user';
+}
+
+const ACTIVITY_ACTION_LABELS = {
+    create_server: 'Create server',
+    update_server: 'Update server',
+    delete_server: 'Delete server',
+    create_build: 'Create build',
+    delete_build: 'Delete build',
+    import_modpack: 'Import modpack',
+    create_preset: 'Create preset',
+    update_preset: 'Update preset',
+    delete_preset: 'Delete preset',
+    add_preset_mod: 'Add preset mod',
+    add_preset_custom_file: 'Add preset file',
+    delete_preset_mod: 'Delete preset mod',
+    toggle_preset_mod: 'Toggle preset mod',
+    ban_user: 'Ban user',
+    unban_user: 'Unban user',
+    change_role: 'Change role',
+    change_password: 'Change password',
+    change_own_password: 'Change own password',
+    delete_user: 'Delete user',
+    update_role_permissions: 'Update role permissions',
+    set_maintenance: 'Set maintenance mode',
+    create_build_directory: 'Create build folder',
+    delete_build_directory: 'Delete build folder',
+    update_build_settings: 'Update build settings',
+    delete_build_file: 'Delete build file',
+    rename_build_file: 'Rename build file',
+    upload_build_file: 'Upload build file',
+    create_build_file: 'Create build file'
+};
+
+function activityActionLabel(action) {
+    const key = String(action || '').toLowerCase();
+    if (ACTIVITY_ACTION_LABELS[key]) return ACTIVITY_ACTION_LABELS[key];
+    return key
+        .split('_')
+        .filter(Boolean)
+        .map(word => word[0].toUpperCase() + word.slice(1))
+        .join(' ') || action;
+}
+
+function activityActionClass(action) {
+    const key = String(action || '').toLowerCase();
+    if (/^(delete|ban|change_password)/.test(key)) return 'activity-action-danger';
+    if (/^(update|change|set_|rename|toggle_)/.test(key)) return 'activity-action-warn';
+    if (/^(create|add_|import|upload)/.test(key)) return 'activity-action-create';
+    return '';
+}
+
+function truncateText(value, max) {
+    const text = String(value || '');
+    return text.length > max ? text.slice(0, max - 1) + '…' : text;
+}
+
 function val(id) {
     const el = document.getElementById(id);
     return el ? String(el.value || '').trim() : '';
@@ -51,6 +146,15 @@ function fmtDate(unixSeconds) {
 function fmtBanExpiry(unixSeconds) {
     if (!unixSeconds) return 'permanent';
     return 'until ' + fmtDate(unixSeconds);
+}
+
+function fmtPlayTime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${total}s`;
 }
 
 // Build failure messages are prefixed with an attempt counter ("2|error text").
@@ -146,7 +250,7 @@ const API_ERROR_TEXT = {
     'INVALID_FILE_TYPE': 'Only .mrpack or .zip (CurseForge) files are accepted.',
     'VALIDATION_ERROR': 'Validation failed — check the form fields.',
     'UNAUTHORIZED': 'Your session is not valid. Please sign in again.',
-    'FORBIDDEN': 'Admin access is required for this action.',
+    'FORBIDDEN': 'You do not have permission to perform this action.',
     'NOT_FOUND': 'The requested record was not found.',
     'RATE_LIMITED': 'Too many requests — wait a few seconds and try again.',
     'MAINTENANCE': 'The API is in maintenance mode.'
@@ -230,21 +334,106 @@ async function api(path, options = {}) {
     return body;
 }
 
+// Binary variant of api() for evidence previews/downloads.
+async function apiBlob(path) {
+    let res;
+    try {
+        res = await fetch(`${API_BASE}${path}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+    } catch (e) {
+        throw new Error('Network error: the API is not responding. Check that the server is running.');
+    }
+
+    if (res.status === 401) {
+        logout();
+        throw new Error('Session expired, please sign in again');
+    }
+
+    if (!res.ok) {
+        const text = await res.text();
+        let message = `HTTP ${res.status}`;
+        if (text) {
+            try {
+                const body = JSON.parse(text);
+                message = body.message || body.Message || body.error || body.Error || message;
+            } catch {
+                message = text;
+            }
+        }
+        throw new Error(friendlyError(message));
+    }
+
+    return res.blob();
+}
+
 // ---------- navigation ----------
+
+function selectPage(page) {
+    document.querySelectorAll('.sidebar a').forEach(l =>
+        l.classList.toggle('active', l.dataset.page === page));
+    document.querySelectorAll('.page').forEach(p =>
+        p.classList.toggle('active', p.id === `page-${page}`));
+}
 
 document.querySelectorAll('.sidebar a').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
         const page = link.dataset.page;
-        document.querySelectorAll('.sidebar a').forEach(l => l.classList.remove('active'));
-        link.classList.add('active');
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.getElementById(`page-${page}`).classList.add('active');
+        selectPage(page);
         loadPage(page);
     });
 });
 
+function pageAllowed(page) {
+    switch (page) {
+        case 'dashboard': return true;
+        case 'servers': return can('servers.view') || can('servers.create') || can('servers.edit');
+        case 'builds': return can('builds.upload');
+        case 'presets': return can('presets.create');
+        case 'users': return can('users.view');
+        case 'activity': return can('activity.view');
+        case 'settings': return isAdmin;
+        default: return false;
+    }
+}
+
+async function loadAccess() {
+    const data = await api('/admin/me');
+    isAdmin = !!data.isAdmin;
+    myRole = String(data.role || '').toLowerCase();
+    myPermissions = new Set(data.permissions || []);
+    applyAccess();
+    return data;
+}
+
+function applyAccess() {
+    document.querySelectorAll('.sidebar a[data-page]').forEach(link => {
+        link.parentElement.style.display = pageAllowed(link.dataset.page) ? '' : 'none';
+    });
+
+    const toggle = (id, allowed) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = allowed ? '' : 'none';
+    };
+
+    toggle('add-server-btn', can('servers.create'));
+    toggle('add-build-btn', can('builds.upload'));
+    toggle('import-modpack-btn', can('builds.upload'));
+    toggle('add-preset-btn', can('presets.create'));
+
+    if (!pageAllowed(currentPage)) {
+        selectPage('dashboard');
+        currentPage = 'dashboard';
+    }
+}
+
 async function loadPage(page) {
+    if (!pageAllowed(page)) {
+        selectPage('dashboard');
+        page = 'dashboard';
+    }
+
     if (page !== 'builds') stopBuildsRefresh();
     currentPage = page;
     switch (page) {
@@ -253,6 +442,7 @@ async function loadPage(page) {
         case 'builds': await loadBuilds(); startBuildsRefresh(); break;
         case 'presets': await loadPresets(); break;
         case 'users': await loadUsers(); break;
+        case 'activity': await loadActivity(); break;
         case 'settings': await loadSettings(); break;
     }
 }
@@ -260,22 +450,37 @@ async function loadPage(page) {
 // ---------- dashboard ----------
 
 async function loadDashboard() {
-    try {
-        const [users, servers, builds, maintenance] = await Promise.all([
-            api('/admin/users?page=1&pageSize=1'),
-            api('/admin/servers'),
-            api('/builds?page=1&pageSize=1'),
-            api('/admin/status/maintenance')
-        ]);
-        document.getElementById('stat-users').textContent = users.totalCount || 0;
-        document.getElementById('stat-servers').textContent = (servers || []).filter(s => s.isActive).length;
-        document.getElementById('stat-builds').textContent = (builds && builds.totalCount) || 0;
-        const mt = document.getElementById('stat-maintenance');
-        mt.textContent = maintenance.isMaintenance ? 'ON' : 'OFF';
-        mt.className = maintenance.isMaintenance ? 'is-on' : 'is-off';
-    } catch (e) {
-        console.error(e);
-        toast('error', 'Failed to load dashboard stats: ' + e.message);
+    const [users, servers, builds, maintenance] = await Promise.allSettled([
+        can('users.view')
+            ? api('/admin/users?page=1&pageSize=1')
+            : Promise.reject(new Error('forbidden')),
+        can('servers.view')
+            ? api('/admin/servers')
+            : Promise.reject(new Error('forbidden')),
+        can('builds.upload')
+            ? api('/builds?page=1&pageSize=1')
+            : Promise.reject(new Error('forbidden')),
+        isAdmin
+            ? api('/admin/status/maintenance')
+            : Promise.reject(new Error('forbidden'))
+    ]);
+
+    document.getElementById('stat-users').textContent =
+        users.status === 'fulfilled' ? (users.value.totalCount || 0) : '—';
+    document.getElementById('stat-servers').textContent =
+        servers.status === 'fulfilled'
+            ? (servers.value || []).filter(s => s.isActive).length
+            : '—';
+    document.getElementById('stat-builds').textContent =
+        builds.status === 'fulfilled' ? ((builds.value && builds.value.totalCount) || 0) : '—';
+
+    const mt = document.getElementById('stat-maintenance');
+    if (maintenance.status === 'fulfilled') {
+        mt.textContent = maintenance.value.isMaintenance ? 'ON' : 'OFF';
+        mt.className = maintenance.value.isMaintenance ? 'is-on' : 'is-off';
+    } else {
+        mt.textContent = '—';
+        mt.className = '';
     }
 }
 
@@ -366,10 +571,10 @@ async function loadServers() {
                 <td>${buildBadge(s.buildId)}</td>
                 <td>${esc(s.ipAddress)}</td>
                 <td><span class="status ${s.isActive ? 'status-active' : 'status-inactive'}">${s.isActive ? 'Active' : 'Inactive'}</span></td>
-                <td>
-                    <button class="btn btn-sm" data-action="edit-server" data-id="${s.id}">Edit</button>
-                    <button class="btn btn-sm btn-danger" data-action="delete-server" data-id="${s.id}">Delete</button>
-                </td>
+                <td>${can('servers.edit')
+                    ? `<button class="btn btn-sm" data-action="edit-server" data-id="${s.id}">Edit</button>
+                       <button class="btn btn-sm btn-danger" data-action="delete-server" data-id="${s.id}">Delete</button>`
+                    : '—'}</td>
             </tr>
         `).join('');
     } catch (e) {
@@ -1010,57 +1215,70 @@ async function saveBuild() {
 
 // ---------- modpack import (.mrpack / CurseForge zip) ----------
 
-function importModpack(focusCurseForgeFile) {
+function importModpack() {
     showModal(`
-        <h3>Import Modpack (.mrpack or CurseForge .zip)</h3>
+        <h3>Import modpack</h3>
+        <p class="muted">Modrinth by project slug/ID, or a local .mrpack / CurseForge .zip.</p>
+
         <div class="form-group">
             <label>Bind build to server (optional)</label>
             <select id="mp-server"><option value="">— none —</option></select>
         </div>
-        <h4>From Modrinth</h4>
         <div class="form-group">
-            <label>Project slug or ID *</label>
-            <input type="text" id="mp-slug" placeholder="fabulously-optimized">
-        </div>
-        <div class="form-group">
-            <label>Build name (optional, shared with file import)</label>
+            <label>Build name (optional)</label>
             <input type="text" id="mp-name" placeholder="defaults to the modpack name">
         </div>
-        <div class="form-group">
-            <label>Version ID (optional — latest release is used)</label>
-            <input type="text" id="mp-version-id" placeholder="e.g. abc123...">
+
+        <div class="mp-tabs" role="tablist">
+            <button type="button" class="mp-tab active" data-action="mp-tab" data-tab="modrinth" role="tab" aria-selected="true">Modrinth</button>
+            <button type="button" class="mp-tab" data-action="mp-tab" data-tab="file" role="tab" aria-selected="false">CurseForge / file</button>
         </div>
+
+        <div id="mp-panel-modrinth" class="mp-panel">
+            <div class="form-group">
+                <label>Project slug or ID *</label>
+                <input type="text" id="mp-slug" placeholder="fabulously-optimized">
+            </div>
+            <div class="form-group">
+                <label>Version ID (optional — latest release is used)</label>
+                <input type="text" id="mp-version-id" placeholder="e.g. abc123…">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="mp-modrinth-btn" data-action="import-modpack-modrinth">Import from Modrinth</button>
+            </div>
+        </div>
+
+        <div id="mp-panel-file" class="mp-panel" hidden>
+            <div class="form-group">
+                <label>Modrinth .mrpack or CurseForge .zip, up to 1 GB</label>
+                <input type="file" id="mp-file" accept=".mrpack,.zip,application/zip">
+                <p class="hint">The format is detected from the archive contents, not the file name.
+                CurseForge packs need <code>CurseForge__ApiKey</code> on the server.</p>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>
+            </div>
+        </div>
+
         <div class="btn-group">
-            <button class="btn btn-primary" id="mp-modrinth-btn" data-action="import-modpack-modrinth">Import from Modrinth</button>
-        </div>
-        <hr>
-        <h4>From file (Modrinth or CurseForge)</h4>
-        <div class="form-group">
-            <label>.mrpack (Modrinth) or .zip (CurseForge) file, up to 1 GB</label>
-            <input type="file" id="mp-file" accept=".mrpack,.zip,application/zip">
-            <p class="hint">The format is detected from the archive contents, not from the file name.
-            CurseForge packs need <code>CurseForge__ApiKey</code> in the server's .env.</p>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>
             <button class="btn" data-action="close-modal">Cancel</button>
         </div>
-        <p class="hint">The server auto-detects the format (Modrinth .mrpack or CurseForge .zip).
-        It prepares the matching engine (Fabric / Forge / NeoForge), downloads all client files
-        and applies pack overrides. Follow progress in the builds table.</p>
     `);
 
     loadModpackServers();
+}
 
-    // "Import from CurseForge" only makes sense for a pack downloaded from curseforge.com, so
-    // jump straight to the file field instead of making the admin hunt for it.
-    if (focusCurseForgeFile) {
-        const fileInput = document.getElementById('mp-file');
-        if (fileInput) {
-            fileInput.scrollIntoView({ block: 'center' });
-            fileInput.focus();
-        }
-    }
+function switchModpackTab(tab) {
+    document.querySelectorAll('.mp-tab').forEach(btn => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.mp-panel').forEach(panel => {
+        panel.hidden = panel.id !== `mp-panel-${tab}`;
+    });
+    const focusId = tab === 'modrinth' ? 'mp-slug' : 'mp-file';
+    document.getElementById(focusId)?.focus();
 }
 
 async function loadModpackServers() {
@@ -2031,12 +2249,18 @@ function viewBuildLogs(el) {
             }
             if (lines.length) {
                 lastId = data.latestId || lines[lines.length - 1].id;
-                view.insertAdjacentHTML('beforeend', lines.map(l =>
-                    `<div class="log-line log-${esc(l.level || 'info')}">
+                view.insertAdjacentHTML('beforeend', lines.map(l => {
+                    // Log messages arrive with blank lines around some stages; collapsing them
+                    // keeps the dialog compact without losing stack-trace line breaks.
+                    const text = String(l.message || '')
+                        .replace(/\r\n/g, '\n')
+                        .replace(/\n{2,}/g, '\n')
+                        .trim();
+                    return `<div class="log-line log-${esc(l.level || 'info')}">
                         <span class="log-time">${fmtLogTime(l.createdAt)}</span>
-                        <span>${esc(l.message)}</span>
-                     </div>`
-                ).join(''));
+                        <span>${esc(text)}</span>
+                     </div>`;
+                }).join(''));
                 view.scrollTop = view.scrollHeight;
             } else if (first) {
                 view.innerHTML = '<div class="muted">No log lines recorded yet.</div>';
@@ -2086,24 +2310,41 @@ async function loadUsers() {
             const banTitle = banned
                 ? `Ban reason: ${esc(u.banReason || 'no reason')}, ${fmtBanExpiry(u.banExpiresAt)}`
                 : '';
-            const roleClass = u.role === 'admin' ? 'status-role-admin' : 'status-role-user';
+            const roleClass = roleStatusClass(u.role);
+            const targetIsAdmin = String(u.role || '').toLowerCase() === 'admin';
+            const manageable = canManageRole(u.role);
+            const actions = [];
+
+            if (manageable) {
+                if (can('users.ban')) {
+                    actions.push(banned
+                        ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
+                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}" data-username="${esc(u.username)}">Ban</button>`);
+                }
+                if (can('users.change_role')) {
+                    actions.push(`<button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>`);
+                }
+                if (can('users.change_password')) {
+                    actions.push(`<button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>`);
+                }
+            }
+            if (isAdmin && !targetIsAdmin) {
+                actions.push(`<button class="btn btn-sm btn-danger" data-action="delete-user" data-id="${u.id}" data-username="${esc(u.username)}">Delete</button>`);
+            }
+
             return `
             <tr>
                 <td>${u.id}</td>
-                <td>${esc(u.username)}</td>
+                <td>${manageable
+                    ? `<button type="button" class="user-link" data-action="view-user" data-id="${u.id}" title="View user statistics">${esc(u.username)}</button>`
+                    : esc(u.username)}</td>
                 <td>${u.uuid ? esc(String(u.uuid).substring(0, 8)) + '…' : '—'}</td>
                 <td><span class="status ${roleClass}">${esc(u.role)}</span></td>
                 <td>${banned
                     ? `<span class="status status-banned" title="${banTitle}">Banned</span>`
                     : '<span class="status status-active">OK</span>'}</td>
                 <td>${u.lastLogin ? fmtDate(u.lastLogin) : 'Never'}</td>
-                <td>
-                    ${banned
-                        ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
-                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`}
-                    <button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>
-                    <button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>
-                </td>
+                <td>${actions.length ? actions.join(' ') : '—'}</td>
             </tr>`;
         }).join('');
     } catch (e) {
@@ -2112,15 +2353,236 @@ async function loadUsers() {
     }
 }
 
+// ---------- activity ----------
+
+async function loadActivity(resetPage = false) {
+    if (resetPage) activityPage = 1;
+
+    try {
+        const params = new URLSearchParams({
+            page: String(activityPage),
+            pageSize: String(activityPageSize),
+            days: String(activityDays)
+        });
+        if (activityQuery) params.set('query', activityQuery);
+        if (activityAction) params.set('action', activityAction);
+        if (activityActor) params.set('actor', activityActor);
+
+        const data = await api('/admin/activity?' + params.toString());
+        activityTotalPages = (data && data.totalPages) || 0;
+
+        // Deletions/retention may leave the current page empty; fall back to the last page.
+        if (activityPage > 1 && activityTotalPages > 0 && activityPage > activityTotalPages) {
+            activityPage = activityTotalPages;
+            return loadActivity();
+        }
+
+        renderActivitySummary(data.summary || {});
+        renderActivityFilters(data.filterOptions || {});
+        updateActivityPager(data);
+        renderActivityTable(data.items || []);
+        renderActivityTop(data.summary || {});
+    } catch (e) {
+        console.error(e);
+        toast('error', 'Failed to load activity: ' + e.message);
+    }
+}
+
+function renderActivitySummary(summary) {
+    const set = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value ?? 0);
+    };
+
+    set('activity-stat-total', summary.totalCount || 0);
+    set('activity-stat-today', summary.todayCount || 0);
+    set('activity-stat-week', summary.last7DaysCount || 0);
+    set('activity-stat-actors', summary.uniqueActors || 0);
+}
+
+function renderActivityFilters(options) {
+    const actionSelect = document.getElementById('activity-action-filter');
+    const actorSelect = document.getElementById('activity-actor-filter');
+    if (!actionSelect || !actorSelect) return;
+
+    actionSelect.innerHTML = '<option value="">All actions</option>' + (options.actions || [])
+        .map(action => `<option value="${esc(action)}" ${action === activityAction ? 'selected' : ''}>${esc(activityActionLabel(action))}</option>`)
+        .join('');
+    actionSelect.value = activityAction;
+
+    actorSelect.innerHTML = '<option value="">All actors</option>' + (options.actors || [])
+        .map(actor => `<option value="${esc(actor)}" ${actor === activityActor ? 'selected' : ''}>${esc(actor)}</option>`)
+        .join('');
+    actorSelect.value = activityActor;
+}
+
+function updateActivityPager(data) {
+    const info = document.getElementById('activity-page-info');
+    const prev = document.getElementById('activity-prev');
+    const next = document.getElementById('activity-next');
+    if (!info || !prev || !next) return;
+
+    const page = (data && data.page) || activityPage;
+    const totalPages = (data && data.totalPages) || 0;
+    const totalCount = (data && data.totalCount) || 0;
+
+    info.textContent = totalCount === 0
+        ? 'No activity'
+        : `Page ${page} / ${Math.max(totalPages, 1)} · ${totalCount} events`;
+
+    prev.disabled = page <= 1;
+    next.disabled = totalPages === 0 || page >= totalPages;
+}
+
+function activityTargetLabel(targetType) {
+    const text = String(targetType || '').replace(/_/g, ' ').trim();
+    return text ? text[0].toUpperCase() + text.slice(1) : '';
+}
+
+function renderActivityTable(items) {
+    const tbody = document.querySelector('#activity-table tbody');
+    if (!tbody) return;
+
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5">No activity matches these filters.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = items.map(item => {
+        const target = item.targetType
+            ? `${activityTargetLabel(item.targetType)}${item.targetId !== null && item.targetId !== undefined ? ` #${item.targetId}` : ''}`
+            : '—';
+        const details = item.details || '';
+
+        return `
+            <tr>
+                <td class="activity-when">${fmtDate(item.createdAt)}</td>
+                <td><span class="activity-actor">${esc(item.actor)}</span></td>
+                <td>
+                    <span class="activity-action ${activityActionClass(item.action)}" title="${esc(item.action)}">${esc(activityActionLabel(item.action))}</span>
+                    <small class="activity-action-key">${esc(item.action)}</small>
+                </td>
+                <td class="activity-target">${esc(target)}</td>
+                <td class="activity-details" title="${esc(details)}">${esc(truncateText(details, 160)) || '—'}</td>
+            </tr>`;
+    }).join('');
+}
+
+function renderActivityTop(summary) {
+    const actionsHost = document.getElementById('activity-top-actions');
+    const actorsHost = document.getElementById('activity-top-actors');
+    if (!actionsHost || !actorsHost) return;
+
+    const topActions = summary.topActions || [];
+    const maxAction = Math.max(...topActions.map(x => Number(x.count) || 0), 1);
+
+    actionsHost.innerHTML = topActions.length
+        ? topActions.map(item => `
+            <div class="activity-bar-row">
+                <div class="activity-bar-head">
+                    <span>${esc(activityActionLabel(item.name))}</span>
+                    <strong>${Number(item.count) || 0}</strong>
+                </div>
+                <div class="activity-bar"><div class="activity-bar-fill" style="width:${Math.max(4, (Number(item.count) || 0) / maxAction * 100)}%"></div></div>
+            </div>`).join('')
+        : '<p class="muted">No activity.</p>';
+
+    const topActors = summary.topActors || [];
+    actorsHost.innerHTML = topActors.length
+        ? topActors.map(item => `
+            <div class="activity-actor-row">
+                <span class="activity-actor">${esc(item.name)}</span>
+                <strong>${Number(item.count) || 0}</strong>
+            </div>`).join('')
+        : '<p class="muted">No activity.</p>';
+}
+
+function clearActivityFilters() {
+    activityQuery = '';
+    activityAction = '';
+    activityActor = '';
+    activityDays = 0;
+    activityPage = 1;
+
+    const search = document.getElementById('activity-search');
+    const range = document.getElementById('activity-range');
+    const action = document.getElementById('activity-action-filter');
+    const actor = document.getElementById('activity-actor-filter');
+    if (search) search.value = '';
+    if (range) range.value = '0';
+    if (action) action.value = '';
+    if (actor) actor.value = '';
+
+    loadActivity(true);
+}
+
 // ---------- settings ----------
 
 async function loadSettings() {
+    if (!isAdmin) return;
+
     try {
         const data = await api('/admin/status/maintenance');
         document.getElementById('maintenance-toggle').checked = !!data.isMaintenance;
         document.getElementById('maintenance-state').textContent = data.isMaintenance ? 'ON' : 'OFF';
     } catch (e) {
         console.error(e);
+    }
+
+    await loadRolePermissions();
+}
+
+async function loadRolePermissions() {
+    const host = document.getElementById('role-permissions');
+    if (!host) return;
+
+    try {
+        const data = await api('/admin/permissions');
+        const catalog = data.permissions || [];
+        const roles = data.roles || [];
+
+        host.innerHTML = roles.map(role => {
+            const granted = new Set(role.permissions || []);
+            const checks = catalog.map(permission => `
+                <label class="perm-check">
+                    <input type="checkbox" data-perm="${esc(permission.key)}" ${granted.has(permission.key) ? 'checked' : ''}>
+                    <span>
+                        <strong>${esc(permission.label)}</strong>
+                        <small>${esc(permission.description)}</small>
+                    </span>
+                </label>`).join('');
+
+            return `
+                <div class="role-card" data-role="${esc(role.role)}">
+                    <div class="role-card-head">
+                        <h4>${esc(role.label)}</h4>
+                        <span class="status ${roleStatusClass(role.role)}">${esc(role.role)}</span>
+                    </div>
+                    <div class="role-permissions">${checks}</div>
+                    <button class="btn btn-primary" data-action="save-role-permissions" data-role="${esc(role.role)}">Save ${esc(role.label)} access</button>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        console.error(e);
+        host.innerHTML = `<p class="hint">Failed to load role permissions: ${esc(e.message)}</p>`;
+    }
+}
+
+async function saveRolePermissions(role) {
+    const card = document.querySelector(`.role-card[data-role="${CSS.escape(role)}"]`);
+    if (!card) return;
+
+    const permissions = Array.from(card.querySelectorAll('input[data-perm]:checked'))
+        .map(input => input.dataset.perm);
+
+    try {
+        await api(`/admin/permissions/${encodeURIComponent(role)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ permissions })
+        });
+        toast('success', `${role} access saved.`);
+    } catch (e) {
+        toast('error', e.message);
     }
 }
 
@@ -2130,9 +2592,11 @@ function showModal(html) {
     document.getElementById('modal-body').innerHTML = html;
     // Dialogs with tables or raw JSON (manifest, preset mods, Modrinth search) need room.
     const wide = /<(table|pre)\b|class="[^"]*\blog-view\b/.test(html);
+    const logs = /class="[^"]*\blog-view\b/.test(html);
     const modal = document.getElementById('modal');
     closeEditorRowMenu();
     modal.classList.toggle('wide', wide);
+    modal.classList.toggle('logs', logs);
     modal.classList.remove('editor');
     modal.classList.add('active');
 }
@@ -2146,7 +2610,7 @@ function closeModal() {
 
     stopBuildLogRefresh();
     closeEditorRowMenu();
-    modal.classList.remove('active', 'editor');
+    modal.classList.remove('active', 'editor', 'logs');
     editorDirty = false;
     editorBuild = null;
     editorFiles = [];
@@ -2156,6 +2620,11 @@ function closeModal() {
     editorSelectedPath = null;
     editorFileContent = null;
     editorSearch = '';
+
+    if (evidenceObjectUrl) {
+        URL.revokeObjectURL(evidenceObjectUrl);
+        evidenceObjectUrl = null;
+    }
 }
 
 document.querySelector('.close').addEventListener('click', closeModal);
@@ -2165,35 +2634,333 @@ document.getElementById('modal').addEventListener('click', (e) => {
 
 // ---------- user actions ----------
 
-function banUser(id) {
+async function viewUser(id) {
+    try {
+        const s = await api(`/admin/users/${id}/statistics`);
+        const roleClass = roleStatusClass(s.role);
+        const ipRows = (s.ipHistory || []).map(h => `
+            <tr>
+                <td>${esc(h.ip)}</td>
+                <td>${fmtDate(h.firstSeen)}</td>
+                <td>${fmtDate(h.lastSeen)}</td>
+                <td>${Number(h.seenCount) || 0}</td>
+            </tr>`).join('');
+        const ban = s.isBanned
+            ? `<p class="hint">Banned: ${esc(s.banReason || 'no reason')} · ${fmtBanExpiry(s.banExpiresAt)} · by ${esc(s.bannedBy || '—')}</p>`
+            : '';
+
+        const renderEvidence = (files) => {
+            if (!can('users.ban')) {
+                return '<span class="muted">Evidence is available to staff with ban permission.</span>';
+            }
+            if (!files || !files.length) {
+                return '<span class="muted">No evidence attached (legacy ban).</span>';
+            }
+            return files.map(file => `
+                <button type="button"
+                        class="evidence-chip ${file.isImage ? 'is-image' : ''}"
+                        data-action="${file.isImage ? 'view-evidence' : 'download-evidence'}"
+                        data-id="${file.id}"
+                        data-name="${esc(file.fileName)}"
+                        data-type="${esc(file.contentType)}"
+                        title="${esc(file.fileName)} · ${fmtBytes(file.size)}">
+                    <span class="evidence-kind">${file.isImage ? 'Image' : 'File'}</span>
+                    <span class="evidence-name">${esc(file.fileName)}</span>
+                    <small>${fmtBytes(file.size)}</small>
+                </button>`).join('');
+        };
+
+        const banHistory = (s.bans || []).map(entry => `
+            <div class="ban-history-item ${entry.isActive ? 'is-active' : ''}">
+                <div class="ban-history-head">
+                    <span class="status ${entry.isActive ? 'status-banned' : 'status-inactive'}">${entry.isActive ? 'Active' : 'Ended'}</span>
+                    <span class="muted">${fmtDate(entry.createdAt)}</span>
+                </div>
+                <p class="ban-history-reason">${esc(entry.reason)}</p>
+                <p class="muted">By ${esc(entry.bannedBy || '—')} · ${entry.expiresAt ? 'until ' + fmtDate(entry.expiresAt) : 'permanent'}</p>
+                <div class="evidence-list">${renderEvidence(entry.evidence)}</div>
+            </div>`).join('');
+
+        showModal(`
+            <h3>${esc(s.username)} <span class="status ${roleClass}">${esc(s.role)}</span></h3>
+            <p class="muted">ID ${s.id} · UUID ${esc(s.uuid || '—')}</p>
+            <div class="detail-grid">
+                <div><span class="detail-label">Registered</span>${fmtDate(s.regDate)}</div>
+                <div><span class="detail-label">Last login</span>${fmtDate(s.lastLogin)}</div>
+                <div><span class="detail-label">Play time</span>${fmtPlayTime(s.playTime)}</div>
+                <div><span class="detail-label">Murders / deaths</span>${Number(s.murders) || 0} / ${Number(s.deaths) || 0}</div>
+                <div><span class="detail-label">Registration IP</span>${esc(s.regIp || '—')}</div>
+                <div><span class="detail-label">Last IP</span>${esc(s.lastIp || '—')}</div>
+                <div><span class="detail-label">Email</span>${esc(s.email || '—')}</div>
+                <div><span class="detail-label">Status</span>${s.isBanned ? 'Banned' : 'OK'}</div>
+            </div>
+            ${ban}
+            <h4>IP history</h4>
+            ${ipRows
+                ? `<div class="ip-history"><table class="table">
+                       <thead><tr><th>IP</th><th>First seen</th><th>Last seen</th><th>Seen</th></tr></thead>
+                       <tbody>${ipRows}</tbody>
+                   </table></div>`
+                : '<p class="muted">No login IPs recorded yet.</p>'}
+            <h4>Ban history</h4>
+            ${banHistory || '<p class="muted">No bans recorded.</p>'}
+            <div class="btn-group">
+                <button class="btn" data-action="close-modal">Close</button>
+            </div>
+        `);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+function toDateInputValue(date) {
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function toTimeInputValue(date) {
+    const pad = value => String(value).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function banExpiryDate() {
+    const date = val('ban-date');
+    const time = val('ban-time');
+    if (!date || !time) return null;
+    const parsed = new Date(`${date}T${time}:00`);
+    return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function fmtRemaining(ms) {
+    const totalMinutes = Math.max(0, Math.ceil(ms / 60000));
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+function setBanExpiryFromNow(hours) {
+    const date = new Date(Date.now() + Math.max(1, hours) * 3600 * 1000);
+    const dateInput = document.getElementById('ban-date');
+    const timeInput = document.getElementById('ban-time');
+    if (dateInput) dateInput.value = toDateInputValue(date);
+    if (timeInput) timeInput.value = toTimeInputValue(date);
+    syncBanForm();
+}
+
+function syncBanForm() {
+    const reason = val('ban-reason');
+    const mode = val('ban-mode') || 'temporary';
+    const permanent = mode === 'permanent';
+    const expiry = banExpiryDate();
+    const fileInput = document.getElementById('ban-evidence');
+    const files = Array.from(fileInput?.files || []);
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+
+    const validExpiry = permanent || (expiry !== null && expiry.getTime() > Date.now());
+    const validFiles =
+        files.length >= 1 &&
+        files.length <= 5 &&
+        totalBytes <= 40 * 1024 * 1024 &&
+        files.every(file => file.size > 0 && file.size <= 10 * 1024 * 1024);
+    const validReason = reason.length >= 10 && reason.length <= 2000;
+
+    const button = document.querySelector('#modal-body [data-action="confirm-ban"]');
+    if (button) button.disabled = !(validExpiry && validFiles && validReason);
+
+    const fields = document.getElementById('ban-expiry-fields');
+    if (fields) fields.style.display = permanent ? 'none' : '';
+
+    const preview = document.getElementById('ban-expiry-preview');
+    if (preview) {
+        if (permanent) {
+            preview.textContent = 'The account stays blocked until an administrator lifts the ban.';
+        } else if (!expiry) {
+            preview.textContent = 'Choose a ban end date and time.';
+        } else if (expiry.getTime() <= Date.now()) {
+            preview.textContent = 'The end date and time must be in the future.';
+        } else {
+            preview.textContent = `Until ${expiry.toLocaleString()} · in ${fmtRemaining(expiry.getTime() - Date.now())}`;
+        }
+    }
+
+    const hint = document.getElementById('ban-reason-hint');
+    if (hint) {
+        hint.textContent = `${reason.length} / 2000 · minimum 10 characters`;
+        hint.classList.toggle('error', reason.length > 0 && reason.length < 10);
+    }
+
+    const list = document.getElementById('ban-evidence-list');
+    if (list) {
+        list.innerHTML = files.map(file => {
+            const tooLarge = file.size > 10 * 1024 * 1024;
+            return `<li class="${tooLarge ? 'invalid' : ''}">
+                        <span>${esc(file.name)}</span>
+                        <small>${fmtBytes(file.size)}${tooLarge ? ' · over 10 MB' : ''}</small>
+                    </li>`;
+        }).join('');
+    }
+}
+
+function banUser(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const username = el && el.dataset ? (el.dataset.username || '') : '';
+    if (!id) return;
+
     showModal(`
-        <h3>Ban User ${id}</h3>
+        <h3>Ban ${esc(username || 'user #' + id)}</h3>
+        <p class="hint">A written reason and at least one evidence file are required.</p>
+
         <div class="form-group">
-            <label>Reason</label>
-            <input type="text" id="ban-reason" placeholder="Reason for ban">
+            <label>Ban type</label>
+            <select id="ban-mode">
+                <option value="temporary">Temporary</option>
+                <option value="permanent">Permanent</option>
+            </select>
         </div>
+
+        <div id="ban-expiry-fields">
+            <div class="form-group">
+                <label>Ban until (date and time)</label>
+                <div class="ban-datetime-row">
+                    <input type="date" id="ban-date">
+                    <input type="time" id="ban-time" step="60">
+                </div>
+                <div class="ban-quick">
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="1">+1 hour</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="24">+24 hours</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="168">+7 days</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="720">+30 days</button>
+                </div>
+                <p class="hint" id="ban-expiry-preview"></p>
+            </div>
+        </div>
+
         <div class="form-group">
-            <label>Duration (days, empty = permanent)</label>
-            <input type="number" id="ban-duration" placeholder="Permanent">
+            <label>Reason for the ban</label>
+            <textarea id="ban-reason" rows="4" maxlength="2000" placeholder="Describe what happened and why this account is being blocked..."></textarea>
+            <p class="hint" id="ban-reason-hint">0 / 2000 · minimum 10 characters</p>
         </div>
+
+        <div class="form-group">
+            <label>Evidence (required)</label>
+            <input type="file" id="ban-evidence" multiple
+                   accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.pdf,.txt,.log,.json,.csv,.zip,.doc,.docx,.mp4,.webm">
+            <p class="hint">Screenshots, chat logs, documents or video. Up to 5 files, 10 MB each, 40 MB total.</p>
+            <ul id="ban-evidence-list" class="evidence-picker"></ul>
+        </div>
+
         <div class="btn-group">
-            <button class="btn btn-danger" data-action="confirm-ban" data-id="${id}">Ban</button>
+            <button class="btn btn-danger" data-action="confirm-ban" data-id="${id}" disabled>Apply ban</button>
             <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
+
+    const mode = document.getElementById('ban-mode');
+    const reason = document.getElementById('ban-reason');
+    const date = document.getElementById('ban-date');
+    const time = document.getElementById('ban-time');
+    const evidence = document.getElementById('ban-evidence');
+
+    mode?.addEventListener('change', syncBanForm);
+    reason?.addEventListener('input', syncBanForm);
+    date?.addEventListener('input', syncBanForm);
+    time?.addEventListener('input', syncBanForm);
+    evidence?.addEventListener('change', syncBanForm);
+
+    setBanExpiryFromNow(24);
 }
 
 async function confirmBan(id) {
+    const button = document.querySelector('#modal-body [data-action="confirm-ban"]');
+    const reason = val('ban-reason');
+    const permanent = val('ban-mode') === 'permanent';
+    const expiry = permanent ? null : banExpiryDate();
+    const files = Array.from(document.getElementById('ban-evidence')?.files || []);
+
+    if (reason.length < 10) {
+        toast('error', 'Describe the reason in at least 10 characters.');
+        return;
+    }
+    if (!permanent && (!expiry || expiry.getTime() <= Date.now())) {
+        toast('error', 'Choose a ban end date and time in the future.');
+        return;
+    }
+    if (!files.length) {
+        toast('error', 'Attach at least one evidence file.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('reason', reason);
+    if (expiry) formData.append('expiresAt', String(Math.floor(expiry.getTime() / 1000)));
+    files.forEach(file => formData.append('evidence', file, file.name));
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Applying ban…';
+    }
+
     try {
-        const days = val('ban-duration');
-        const data = {
-            reason: val('ban-reason') || null,
-            durationDays: days ? parseInt(days, 10) : null
-        };
-        await api(`/admin/users/${id}/ban`, { method: 'POST', body: JSON.stringify(data) });
+        await api(`/admin/users/${id}/ban`, { method: 'POST', body: formData });
         closeModal();
         toast('success', 'User banned.');
         await loadUsers();
+    } catch (e) {
+        toast('error', e.message);
+        if (button) {
+            button.textContent = 'Apply ban';
+            syncBanForm();
+        }
+    }
+}
+
+async function viewEvidence(el) {
+    const id = el?.dataset?.id;
+    const name = el?.dataset?.name || 'Evidence';
+    const type = el?.dataset?.type || '';
+    if (!id) return;
+
+    if (!type.startsWith('image/')) {
+        await downloadEvidence(el);
+        return;
+    }
+
+    try {
+        const blob = await apiBlob(`/admin/ban-evidence/${id}`);
+        if (evidenceObjectUrl) URL.revokeObjectURL(evidenceObjectUrl);
+        evidenceObjectUrl = URL.createObjectURL(blob);
+
+        showModal(`
+            <h3>${esc(name)}</h3>
+            <div class="evidence-preview"><img src="${evidenceObjectUrl}" alt="${esc(name)}"></div>
+            <div class="btn-group">
+                <a class="btn" href="${evidenceObjectUrl}" download="${esc(name)}">Download</a>
+                <button class="btn" data-action="close-modal">Close</button>
+            </div>
+        `);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function downloadEvidence(el) {
+    const id = el?.dataset?.id;
+    const name = el?.dataset?.name || 'evidence';
+    if (!id) return;
+
+    try {
+        const blob = await apiBlob(`/admin/ban-evidence/${id}`);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
         toast('error', e.message);
     }
@@ -2212,16 +2979,23 @@ async function unbanUser(id) {
 
 function changeRole(el) {
     const id = el && el.dataset ? el.dataset.id : '';
-    const currentRole = el && el.dataset ? (el.dataset.role || 'user') : 'user';
+    const currentRole = el && el.dataset ? (el.dataset.role || 'user').toLowerCase() : 'user';
     if (!id) return;
+
+    const availableRoles = ['user'];
+    if (isAdmin || myRole === 'moderator') availableRoles.push('moderator');
+    if (isAdmin) availableRoles.push('admin');
+
+    const options = availableRoles.map(role =>
+        `<option value="${esc(role)}" ${currentRole === role ? 'selected' : ''}>${esc(role[0].toUpperCase() + role.slice(1))}</option>`
+    ).join('');
 
     showModal(`
         <h3>Change Role - User ${id}</h3>
         <div class="form-group">
             <label>New Role</label>
             <select id="new-role">
-                <option value="user" ${currentRole === 'user' ? 'selected' : ''}>User</option>
-                <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>Admin</option>
+                ${options}
             </select>
         </div>
         <div class="btn-group">
@@ -2282,12 +3056,82 @@ async function confirmPassword(id) {
     }
 }
 
+function deleteUser(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const username = el && el.dataset ? (el.dataset.username || '') : '';
+    if (!id || !username) return;
+
+    showModal(`
+        <h3>Delete account: ${esc(username)}</h3>
+        <p class="hint" style="color: var(--danger, #e5484d)">
+            This permanently deletes the account, its statistics, its ban history and all of its
+            sessions. This action cannot be undone.
+        </p>
+        <div class="form-group">
+            <label>Type <strong>${esc(username)}</strong> to confirm</label>
+            <input type="text" id="delete-confirm-username" autocomplete="off" spellcheck="false" placeholder="${esc(username)}">
+        </div>
+        <div class="form-group">
+            <label>Reason (required, at least 5 characters)</label>
+            <textarea id="delete-reason" rows="3" maxlength="500" placeholder="Why is this account being deleted?"></textarea>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-danger" data-action="confirm-delete-user" data-id="${id}" disabled>Delete permanently</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
+        </div>
+    `);
+
+    const input = document.getElementById('delete-confirm-username');
+    const reason = document.getElementById('delete-reason');
+    const button = document.querySelector('#modal-body [data-action="confirm-delete-user"]');
+    const sync = () => {
+        if (!button) return;
+        button.disabled =
+            input.value.trim().toLowerCase() !== username.trim().toLowerCase() ||
+            reason.value.trim().length < 5;
+    };
+    input.addEventListener('input', sync);
+    reason.addEventListener('input', sync);
+    input.focus();
+}
+
+async function confirmDeleteUser(id) {
+    const input = document.getElementById('delete-confirm-username');
+    const reason = document.getElementById('delete-reason');
+    const button = document.querySelector('#modal-body [data-action="confirm-delete-user"]');
+    const confirmUsername = input ? input.value.trim() : '';
+    const deletionReason = reason ? reason.value.trim() : '';
+
+    if (!confirmUsername) {
+        toast('error', 'Type the username to confirm.');
+        return;
+    }
+    if (deletionReason.length < 5) {
+        toast('error', 'Provide a reason of at least 5 characters.');
+        return;
+    }
+
+    if (button) button.disabled = true;
+
+    try {
+        await api(`/admin/users/${id}/delete`, {
+            method: 'POST',
+            body: JSON.stringify({ confirmUsername, reason: deletionReason })
+        });
+        closeModal();
+        toast('success', 'User permanently deleted.');
+        await loadUsers();
+    } catch (e) {
+        if (button) button.disabled = false;
+        toast('error', e.message);
+    }
+}
+
 // ---------- wiring ----------
 
 document.getElementById('add-server-btn').addEventListener('click', addServer);
 document.getElementById('add-build-btn').addEventListener('click', addBuild);
-document.getElementById('import-modpack-btn').addEventListener('click', () => importModpack(false));
-document.getElementById('import-curseforge-btn').addEventListener('click', () => importModpack(true));
+document.getElementById('import-modpack-btn').addEventListener('click', importModpack);
 
 document.getElementById('user-search').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
@@ -2320,7 +3164,13 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             document.getElementById('login-username').value,
             document.getElementById('login-password').value
         );
+        const access = await loadAccess();
+        if (!access.isAdmin && (!access.permissions || access.permissions.length === 0)) {
+            logout();
+            throw new Error('This account has no access to the admin panel.');
+        }
         showScreen('main');
+        selectPage('dashboard');
         loadPage('dashboard');
     } catch (err) {
         errBox.textContent = err.message;
@@ -2359,6 +3209,7 @@ document.addEventListener('click', (event) => {
         case 'save-build': saveBuild(); break;
         case 'import-modpack-modrinth': importModpackFromModrinth(); break;
         case 'import-modpack-file': importModpackFromFile(); break;
+        case 'mp-tab': switchModpackTab(button.dataset.tab); break;
         case 'delete-build': deleteBuild(Number(button.dataset.id)); break;
         case 'open-build-editor': openBuildEditor(Number(button.dataset.id)); break;
         case 'editor-tab': switchEditorTab(button.dataset.tab); break;
@@ -2379,10 +3230,17 @@ document.addEventListener('click', (event) => {
         case 'editor-refresh-manifest': loadEditorManifest(); break;
         case 'editor-download-manifest': downloadEditorManifest(); break;
         case 'unban-user': unbanUser(Number(button.dataset.id)); break;
-        case 'ban-user': banUser(Number(button.dataset.id)); break;
+        case 'view-user': viewUser(Number(button.dataset.id)); break;
+        case 'ban-user': banUser(button); break;
+        case 'ban-quick': setBanExpiryFromNow(Number(button.dataset.hours) || 24); break;
         case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
+        case 'view-evidence': viewEvidence(button); break;
+        case 'download-evidence': downloadEvidence(button); break;
         case 'confirm-role': confirmRole(Number(button.dataset.id)); break;
         case 'confirm-password': confirmPassword(Number(button.dataset.id)); break;
+        case 'delete-user': deleteUser(button); break;
+        case 'confirm-delete-user': confirmDeleteUser(Number(button.dataset.id)); break;
+        case 'save-role-permissions': saveRolePermissions(button.dataset.role); break;
         case 'close-modal': closeModal(); break;
         case 'view-build': viewBuild(button); break;
         case 'view-logs': viewBuildLogs(button); break;
@@ -2412,6 +3270,49 @@ document.getElementById('builds-status-filter')?.addEventListener('change', (e) 
     buildsStatus = e.target.value || '';
     buildsPage = 1;
     loadBuilds();
+});
+
+// Activity: filters and paging.
+document.getElementById('activity-refresh-btn')?.addEventListener('click', () => loadActivity());
+
+document.getElementById('activity-search')?.addEventListener('input', (e) => {
+    clearTimeout(activitySearchTimer);
+    const value = e.target.value.trim();
+    activitySearchTimer = setTimeout(() => {
+        activityQuery = value;
+        loadActivity(true);
+    }, 350);
+});
+
+document.getElementById('activity-range')?.addEventListener('change', (e) => {
+    activityDays = Number(e.target.value) || 0;
+    loadActivity(true);
+});
+
+document.getElementById('activity-action-filter')?.addEventListener('change', (e) => {
+    activityAction = e.target.value || '';
+    loadActivity(true);
+});
+
+document.getElementById('activity-actor-filter')?.addEventListener('change', (e) => {
+    activityActor = e.target.value || '';
+    loadActivity(true);
+});
+
+document.getElementById('activity-clear')?.addEventListener('click', clearActivityFilters);
+
+document.getElementById('activity-prev')?.addEventListener('click', () => {
+    if (activityPage > 1) {
+        activityPage--;
+        loadActivity();
+    }
+});
+
+document.getElementById('activity-next')?.addEventListener('click', () => {
+    if (activityTotalPages > 0 && activityPage < activityTotalPages) {
+        activityPage++;
+        loadActivity();
+    }
 });
 
 // Build editor: live search and dirty tracking. The file list is re-rendered on every
@@ -2456,8 +3357,23 @@ function showScreen(name) {
 }
 
 if (token) {
-    showScreen('main');
-    loadPage('dashboard');
+    boot();
 } else {
     showScreen('login');
+}
+
+async function boot() {
+    try {
+        const access = await loadAccess();
+        if (!access.isAdmin && (!access.permissions || access.permissions.length === 0)) {
+            logout();
+            return;
+        }
+        showScreen('main');
+        selectPage('dashboard');
+        loadPage('dashboard');
+    } catch (e) {
+        console.error(e);
+        logout();
+    }
 }

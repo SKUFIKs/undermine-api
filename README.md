@@ -46,8 +46,10 @@
 - Регистрация игровых аккаунтов с настраиваемыми лимитами на устройство и подсеть (по умолчанию 2 и 4).
 - Вход с выдачей **JWT** (HS256, срок 30 дней) и проверкой бана перед выдачей токена.
 - Пароли хранятся только в виде **BCrypt**-хешей.
-- Роли `admin` / `user`. Роль попадает в токен и проверяется на админ-эндпоинтах.
+- Роли `admin` / `moderator` / `user` и настраиваемые права для неадминистративных ролей.
+  Роль попадает в токен, проверяется на админ-эндпоинтах и инвалидирует старый JWT при смене.
 - Хранение статистики игрока: время игры, убийства, смерти, offline-UUID.
+- История IP-адресов регистрации/входов (до 50 адресов на пользователя).
 
 ### Каталог серверов
 
@@ -67,10 +69,20 @@
 
 ### Администрирование
 
-- Веб-панель (SPA) на `/admin/`: дашборд, серверы, сборки, пресеты, пользователи, настройки.
-- Управление пользователями: бан/разбан (временный и постоянный), смена роли и пароля.
+- Веб-панель (SPA) на `/admin/`: дашборд, серверы, сборки, пресеты, пользователи,
+  **Activity** и настройки.
+- Роли и права: `admin` всегда имеет все права; для `moderator` и `user` набор из 9 прав
+  настраивается в **Settings → Roles & access**. Интерфейс скрывает недоступные разделы
+  и действия.
+- Управление пользователями: бан/разбан, смена роли и пароля, удаление аккаунта.
+- Бан требует письменную причину и доказательства (1–5 файлов/скриншотов), поддерживает
+  дату и время окончания, быстрые пресеты и постоянную блокировку. Доказательства
+  хранятся в PostgreSQL и доступны только через авторизованный API.
+- История банов с причинами, сроками и вложениями показывается в статистике пользователя.
+- **Activity** — журнал действий администраторов: фильтры по администратору, действию,
+  периоду и тексту, пагинация, сводка и топ действий/администраторов.
 - Режим технических работ с блокировкой публичного API.
-- Аудит действий администраторов в отдельной таблице.
+- Аудит действий администраторов в отдельной таблице `admin_audits`.
 
 ---
 
@@ -407,7 +419,10 @@ apiundermine/
 │   │   ├── ServersController.cs            # каталог серверов + манифест сервера
 │   │   ├── VersionsController.cs           # версии Minecraft и загрузчиков
 │   │   ├── BuildsController.cs             # CRUD сборок, логи, манифест сборки
-│   │   ├── AdminController.cs              # пользователи, серверы, maintenance
+│   │   ├── AdminController.cs              # пользователи, баны, серверы, maintenance
+│   │   ├── AdminAccessController.cs        # /admin/me и права ролей
+│   │   ├── AdminActivityController.cs      # журнал действий Activity
+│   │   ├── AdminBuildEditorController.cs   # файловый редактор сборок
 │   │   ├── AdminModsController.cs          # моды пресетов, поиск в Modrinth
 │   │   ├── AdminPresetsController.cs       # CRUD пресетов сборок
 │   │   ├── AdminModpackController.cs       # импорт модпаков (.mrpack / CurseForge)
@@ -417,9 +432,13 @@ apiundermine/
 │   │   ├── AdminBootstrapService.cs       # создание первого админа
 │   │   ├── JwtService.cs                  # выпуск и проверка JWT
 │   │   ├── UserService.cs / ServerService.cs
+│   │   ├── PermissionService.cs           # права ролей и кеш
+│   │   ├── BanEvidenceService.cs          # валидация доказательств бана
+│   │   ├── UserAccessService.cs           # снапшот бана/роли для middleware
+│   │   ├── BuildEditorService.cs          # редактирование файлов сборки
 │   │   ├── ConfigCacheService.cs          # кеш серверов и флага maintenance
 │   │   ├── ConfigUpdateService.cs         # фоновое обновление кеша
-│   │   ├── AdminAuditService.cs           # аудит действий админов
+│   │   ├── AdminAuditService.cs           # аудит действий и лента Activity
 │   │   ├── GetUuid.cs                     # offline-UUID по логину
 │   │   ├── PasswordHasher/                # BCrypt
 │   │   │
@@ -440,10 +459,14 @@ apiundermine/
 │   ├── Middleware/
 │   │   ├── RequestLoggingMiddleware.cs    # request id, логирование запросов
 │   │   ├── GlobalExceptionHandler.cs      # единый формат ошибок 500
+│   │   ├── AccountBanMiddleware.cs        # бан/роль/token_version на каждом запросе
+│   │   ├── SecurityHeadersMiddleware.cs   # CSP, HSTS, frame/nosniff
 │   │   └── ApiLockMiddleware.cs           # блокировка API при maintenance
 │   │
 │   ├── Domain/Entities/             # EF-сущности доменной модели
-│   │   ├── UserAccount.cs                   # user_accounts (+ BuildFile)
+│   │   ├── UserAccount.cs                   # user_accounts
+│   │   ├── UserIpHistory.cs                 # user_ip_history
+│   │   ├── RolePermission.cs                # role_permissions
 │   │   ├── BuildInstance.cs                 # build_instances + build_files
 │   │   ├── BuildLog.cs                      # build_logs
 │   │   └── BuildPreset.cs                   # build_presets + build_preset_mods
@@ -451,6 +474,7 @@ apiundermine/
 │   ├── Models/                      # модели предметной области
 │   │   ├── UserData.cs                      # user_data (статистика)
 │   │   ├── UserBans.cs                      # user_bans
+│   │   ├── UserBanEvidence.cs               # user_ban_evidence
 │   │   ├── ServerManifest.cs                # server_manifests
 │   │   ├── ServerConfigDetails.cs           # server_configs
 │   │   ├── GlobalSettings.cs                # global_settings
@@ -459,7 +483,8 @@ apiundermine/
 │   │
 │   ├── DTOs/                        # контракты запросов/ответов
 │   │   ├── AuthDtos.cs               # регистрация, вход, валидация токена
-│   │   ├── AdminDto.cs               # запросы админ-панели (бан, серверы)
+│   │   ├── AdminDto.cs               # бан, серверы, статистика, роли
+│   │   ├── AdminActivityDto.cs       # журнал Activity и сводка
 │   │   ├── ServerDTO.cs              # публичный список серверов
 │   │   ├── BuildDto.cs               # сборки, логи, клиентский манифест
 │   │   ├── BuildManifestDto.cs       # манифест сервера + политики синхронизации
@@ -493,13 +518,13 @@ apiundermine/
 | Базовый URL (docker, только с хоста) | `http://localhost:5000` |
 | Префикс | `/api/v1.0` |
 | Аутентификация | `Authorization: Bearer <jwt>` |
-| Формат | JSON, `camelCase` |
+| Формат | JSON, `camelCase`; загрузка файлов — `multipart/form-data` |
 
 ### Аутентификация
 
-Токен содержит `sub` (id пользователя), `UserId`, имя пользователя, роль (`admin`/`user`),
-`token_version` и `jti`. Срок жизни — **30 дней**. Проверяются подпись, издатель, аудитория
-и срок; допустимое отклонение часов — ноль.
+Токен содержит `sub` (id пользователя), `UserId`, имя пользователя, роль
+(`admin`/`moderator`/`user`), `token_version` и `jti`. Срок жизни — **30 дней**. Проверяются
+подпись, издатель, аудитория и срок; допустимое отклонение часов — ноль.
 
 `token_version` позволяет отзывать сессии: смена или сброс пароля инкрементирует версию
 в БД, после чего старые токены получают `401 TOKEN_REVOKED` (нужен повторный вход).
@@ -519,6 +544,36 @@ apiundermine/
 Результат кэшируется на `Access__BanCacheSeconds` (по умолчанию 30 секунд), поэтому
 бан/разбан и смена роли применяются максимум через полминуты даже к уже выданным токенам.
 Публичные эндпоинты (`/login`, `/register`, `[AllowAnonymous]`-манифесты) не блокируются.
+
+### Роли и права
+
+Административная часть работает не только по роли `admin`, но и по отдельным правам.
+Роль `admin` неявно имеет все права; для `moderator` и `user` набор хранится в таблице
+`role_permissions` и редактируется в **Settings → Roles & access**.
+
+| Право | Что разрешает | По умолчанию у `moderator` |
+|---|---|---|
+| `servers.view` | Список и детали серверов в админке | да |
+| `servers.create` | Создание серверов | да |
+| `servers.edit` | Редактирование и удаление серверов | да |
+| `builds.upload` | Сборки, импорт модпаков, редактор файлов, логи | да |
+| `presets.create` | Пресеты и их моды | да |
+| `users.ban` | Список пользователей, бан/разбан, доказательства | да |
+| `users.change_password` | Сброс пароля пользователя | нет |
+| `users.change_role` | Смена роли пользователя | нет |
+| `activity.view` | Журнал Activity | нет |
+
+Дополнительно:
+
+* неадминистратор не может управлять аккаунтом с более высокой ролью;
+* нельзя назначить роль выше собственной (назначать `admin` может только `admin`);
+* неадминистратор не может менять собственную роль;
+* роль `user` по умолчанию не имеет прав; администратор может выдать ей любые права,
+  включая доступ к отдельным разделам админ-панели;
+* изменение роли инвалидирует старый JWT (`401 ROLE_CHANGED`), изменение набора прав
+  применяется в течение ~15 секунд на каждой реплике API.
+
+Интерфейс админ-панели скрывает разделы и действия, на которые у текущей роли нет прав.
 
 ### Ограничение частоты запросов
 
@@ -567,7 +622,7 @@ maintenance + глобальный обработчик):
 
 * `errors` присутствует только для ошибок валидации (`VALIDATION_ERROR`);
 * если эндпоинт не задал явный код, используется `HTTP_<status>`;
-* `401 UNAUTHORIZED` — нет/невалидный токен, `403 FORBIDDEN` — не хватает роли;
+* `401 UNAUTHORIZED` — нет/невалидный токен, `403 FORBIDDEN` — не хватает права или роли;
 * `500 INTERNAL_ERROR` — необработанное исключение;
 * `503 MAINTENANCE` — техработы;
 * `AccountBanMiddleware` дополнительно отдаёт `reason` и `expires_at`.
@@ -659,8 +714,8 @@ maintenance + глобальный обработчик):
 
 | Метод | Путь | Доступ | Описание |
 |---|---|---|---|
-| `GET` | `/api/v1.0/versions/minecraft?loader=fabric&includePrerelease=false` | admin | Версии Minecraft для загрузчика |
-| `GET` | `/api/v1.0/versions/loader?loader=forge&mcVersion=1.21.1` | admin | Версии загрузчика для версии игры |
+| `GET` | `/api/v1.0/versions/minecraft?loader=fabric&includePrerelease=false` | admin area | Версии Minecraft для загрузчика |
+| `GET` | `/api/v1.0/versions/loader?loader=forge&mcVersion=1.21.1` | admin area | Версии загрузчика для версии игры |
 
 Известные загрузчики: `vanilla`, `fabric`, `forge`, `neoforge`.
 
@@ -668,11 +723,11 @@ maintenance + глобальный обработчик):
 
 | Метод | Путь | Доступ | Описание |
 |---|---|---|---|
-| `POST` | `/api/v1.0/builds` | admin | Поставить сборку в очередь |
-| `GET` | `/api/v1.0/builds?page=1&pageSize=20&status=failed&query=tech` | admin | Постраничный список с фильтрами |
-| `GET` | `/api/v1.0/builds/{id}` | admin | Статус одной сборки (id — число) |
-| `GET` | `/api/v1.0/builds/{id}/logs?afterId=0&limit=200` | admin | Журнал обработки |
-| `DELETE` | `/api/v1.0/builds/{id}` | admin | Удалить сборку, файлы и объекты S3 |
+| `POST` | `/api/v1.0/builds` | `builds.upload` | Поставить сборку в очередь |
+| `GET` | `/api/v1.0/builds?page=1&pageSize=20&status=failed&query=tech` | `builds.upload` | Постраничный список с фильтрами |
+| `GET` | `/api/v1.0/builds/{id}` | `builds.upload` | Статус одной сборки (id — число) |
+| `GET` | `/api/v1.0/builds/{id}/logs?afterId=0&limit=200` | `builds.upload` | Журнал обработки |
+| `DELETE` | `/api/v1.0/builds/{id}` | `builds.upload` | Удалить сборку, файлы и объекты S3 |
 | `GET` | `/api/v1.0/builds/{buildId}/manifest` | **анонимно** | Манифест готовой сборки (buildId — строка) |
 
 > Обратите внимание: `/builds/{id}` — это числовой PK в БД, а `/builds/{buildId}/manifest` —
@@ -717,7 +772,8 @@ maintenance + глобальный обработчик):
 После каждого изменения API обновляет S3-объект, строку `build_files` и `manifest_json`,
 поэтому лаунчер видит правку без полной пересборки. Пустые каталоги хранятся как
 S3-маркеры с ключом, оканчивающимся на `/`. Пути проверяются `BuildPathSafety`
-(без `..`, абсолютных путей и недопустимых символов).
+(без `..`, абсолютных путей и недопустимых символов). Все эндпоинты редактора требуют
+право `builds.upload`.
 
 Большие сборки (4000+ файлов) открываются быстро: сборка и список файлов читаются
 двумя отдельными запросами, а S3 листается только на один уровень каталога.
@@ -764,16 +820,68 @@ API скачивает Temurin из Adoptium один раз, проверяет
 `JavaRuntime:MinMajor..MaxMajor` (по умолчанию 8–64). Лаунчер получает дескриптор,
 проверяет хеш перед распаковкой и не обращается к Adoptium/GitHub напрямую.
 
-### Администрирование: пользователи
+### Администрирование: доступ и пользователи
 
-| Метод | Путь | Описание |
+| Метод | Путь | Право | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1.0/admin/me` | любой авторизованный | Роль и эффективные права текущего аккаунта |
+| `GET` | `/api/v1.0/admin/permissions` | `admin` | Права и текущие наборы для `moderator`/`user` |
+| `PUT` | `/api/v1.0/admin/permissions/{role}` | `admin` | Заменить набор прав роли: `{ "permissions": [...] }` |
+| `GET` | `/api/v1.0/admin/activity` | `activity.view` | Журнал действий с фильтрами и сводкой |
+| `GET` | `/api/v1.0/admin/users?page=1&pageSize=20` | любое из `users.*` | Список с пагинацией (`pageSize` максимум 100) |
+| `GET` | `/api/v1.0/admin/users/search?query=abc` | любое из `users.*` | Поиск, максимум 10 результатов |
+| `GET` | `/api/v1.0/admin/users/{id}/statistics` | любое из `users.*` | Статистика, IP-история и история банов с доказательствами |
+| `POST` | `/api/v1.0/admin/users/{id}/ban` | `users.ban` | Бан: multipart, см. ниже |
+| `GET` | `/api/v1.0/admin/ban-evidence/{id}` | `users.ban` | Скачивание доказательства |
+| `POST` | `/api/v1.0/admin/users/{id}/unban` | `users.ban` | Снять все активные баны |
+| `PATCH` | `/api/v1.0/admin/users/{id}/role` | `users.change_role` | `{role: "user"\|"moderator"\|"admin"}` |
+| `PATCH` | `/api/v1.0/admin/users/{id}/change-password` | `users.change_password` | `{newPassword}` (8–72 байта; старые токены отзываются) |
+| `POST` | `/api/v1.0/admin/users/{id}/delete` | `admin` | Безвозвратное удаление с подтверждением username и причиной |
+
+**`POST /admin/users/{id}/ban`** — `multipart/form-data`:
+
+| Поле | Обязательное | Описание |
 |---|---|---|
-| `GET` | `/api/v1.0/admin/users?page=1&pageSize=20` | Список с пагинацией (`pageSize` максимум 100) |
-| `GET` | `/api/v1.0/admin/users/search?query=abc` | Поиск, максимум 10 результатов |
-| `POST` | `/api/v1.0/admin/users/{id}/ban` | Бан: `{reason, durationDays}` (`null` — навсегда) |
-| `POST` | `/api/v1.0/admin/users/{id}/unban` | Снять все баны |
-| `PATCH` | `/api/v1.0/admin/users/{id}/role` | `{role: "admin"\|"user"}` |
-| `PATCH` | `/api/v1.0/admin/users/{id}/change-password` | `{newPassword}` (8–72 байта; старые токены пользователя отзываются) |
+| `reason` | да | Письменная причина, 10–2000 символов |
+| `expiresAt` | нет | Unix UTC; если не передан — бан навсегда |
+| `evidence` | да | 1–5 файлов: PNG/JPG/WEBP/GIF/BMP, PDF, TXT/LOG, JSON/CSV, ZIP, DOC/DOCX, MP4/WEBM |
+
+Ограничения: до 10 МБ на файл и до 40 МБ суммарно. Доказательства сохраняются в
+PostgreSQL (`user_ban_evidence`) и не попадают в публичный S3/CDN. Список банов и
+метаданные вложений возвращаются в `/admin/users/{id}/statistics`.
+
+Пример:
+
+```bash
+curl -X POST http://localhost:8080/api/v1.0/admin/users/42/ban \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "reason=Cheating confirmed by screenshots and chat log" \
+  -F "expiresAt=1795403874" \
+  -F "evidence=@screenshot.png;type=image/png" \
+  -F "evidence=@chat.log;type=text/plain"
+```
+
+`expiresAt` можно не передавать для постоянной блокировки. В админ-панели дата и время
+выбираются через date/time-поля, быстрые кнопки `+1 hour` / `+24 hours` / `+7 days` /
+`+30 days` и режим **Permanent**.
+
+### Администрирование: Activity
+
+`GET /api/v1.0/admin/activity` — журнал действий из `admin_audits` (право `activity.view`).
+
+| Параметр | Описание |
+|---|---|
+| `page`, `pageSize` | Пагинация, `pageSize` 1–100 (по умолчанию 25) |
+| `actor` | Точное имя администратора |
+| `action` | Точный код действия (`ban_user`, `update_server`, …) |
+| `targetType` | Тип цели (`user`, `server`, `build`, `preset`, `role`, …) |
+| `query` | Поиск по actor/action/details без учёта регистра |
+| `days` | Глубина: `1`, `7`, `30`, `0` — всё время |
+
+Ответ содержит `items`, `totalCount`, `page`, `totalPages`, `summary` и `filterOptions`.
+`summary` включает `totalCount`, `todayCount`, `last7DaysCount`, `uniqueActors`,
+`actionTypeCount`, `topActions` и `topActors`. `filterOptions` отдаёт доступные значения
+для выпадающих списков действий и администраторов.
 
 ### Администрирование: серверы и режим
 
@@ -786,6 +894,9 @@ API скачивает Temurin из Adoptium один раз, проверяет
 | `DELETE` | `/api/v1.0/admin/servers/{id}` | Удалить сервер |
 | `POST` | `/api/v1.0/admin/status/maintenance?enabled=true` | Включить/выключить техработы |
 | `GET` | `/api/v1.0/admin/status/maintenance` | Текущее состояние |
+
+Доступ: `servers.view` для чтения, `servers.create` для создания, `servers.edit` для
+обновления/удаления. Maintenance mode доступен только роли `admin`.
 
 **`POST /admin/servers`**
 
@@ -805,6 +916,8 @@ API скачивает Temurin из Adoptium один раз, проверяет
 | `POST` | `/api/v1.0/admin/presets` | Создать пресет |
 | `PUT` | `/api/v1.0/admin/presets/{id}` | Обновить пресет |
 | `DELETE` | `/api/v1.0/admin/presets/{id}` | Удалить пресет вместе с модами |
+
+Все эндпоинты пресетов требуют право `presets.create`.
 
 **`POST /admin/presets`**
 
@@ -826,7 +939,7 @@ API скачивает Temurin из Adoptium один раз, проверяет
 
 Целевые папки: `mods` (`.jar`), `shaderpacks` (`.zip`), `resourcepacks` (`.zip`/`.jar`).
 Загружаемые файлы — до 200 МБ; в S3 кладутся по адресу
-`custom-artifacts/{sha256}{ext}` (дедупликация по хешу).
+`custom-artifacts/{sha256}{ext}` (дедупликация по хешу). Требуется право `presets.create`.
 
 ### Администрирование: импорт модпаков
 
@@ -834,6 +947,8 @@ API скачивает Temurin из Adoptium один раз, проверяет
 |---|---|---|
 | `POST` | `/api/v1.0/admin/builds/import-modpack/modrinth` | Импорт по slug/ID с Modrinth |
 | `POST` | `/api/v1.0/admin/builds/import-modpack/file` | Импорт загруженного `.mrpack` или `.zip` |
+
+Оба эндпоинта требуют право `builds.upload`.
 
 Подробно — в разделе [Импорт модпаков](#импорт-модпаков).
 
@@ -859,11 +974,15 @@ API скачивает Temurin из Adoptium один раз, проверяет
 |---|---|
 | `AdminBootstrapService` | Создаёт первого админа при старте, если админов нет |
 | `JwtService` | Выпуск и проверка JWT |
-| `UserService` | Управление пользователями: пагинация, поиск, бан, роль, пароль, аудит |
+| `UserService` | Пользователи: пагинация, поиск, баны с доказательствами, роль, пароль, удаление, статистика, аудит |
+| `PermissionService` | Права ролей `moderator`/`user`, неявные права `admin`, короткий кеш |
+| `BanEvidenceService` | Валидация и чтение доказательств бана (1–5 файлов, лимиты, MIME-типы) |
+| `UserAccessService` | Снапшот бана/роли/версии токена для `AccountBanMiddleware` |
+| `BuildEditorService` | Файловый менеджер сборки: чтение, правка, загрузка, переименование, удаление |
 | `ServerService` | CRUD серверов, привязка сборок, обновление кеша, аудит |
 | `ConfigCacheService` | Кеш активных серверов и флага maintenance (+ зеркало в Redis) |
 | `ConfigUpdateService` | Фоновое обновление кеша раз в минуту и рассылка в Redis |
-| `AdminAuditService` | Запись действий админов; ошибки аудита не ломают запрос |
+| `AdminAuditService` | Запись действий админов; лента для Activity; ошибки аудита не ломают запрос |
 | `VersionCatalogService` | Версии Minecraft и загрузчиков из Mojang/Fabric/Forge/NeoForge |
 | `BuildWorkerService` | Фоновая очередь сборок, статусы, ретраи, восстановление зависших сборок |
 | `BuildLockService` | Межпроцессная блокировка сборки (PostgreSQL advisory lock) |
@@ -1187,11 +1306,26 @@ CORS-заголовками для лаунчера. URL собираются н
 | **Servers** | Создание, редактирование, удаление серверов; привязка сборки; вкл/выкл |
 | **Builds** | Создание сборки, импорт модпаков (Modrinth и CurseForge), прогресс-бар, живой журнал, удаление |
 | **Presets** | Пресеты сборок и их моды (поиск в Modrinth, загрузка своих файлов) |
-| **Users** | Список, поиск, бан/разбан, смена роли и пароля |
-| **Settings** | Переключение режима технических работ |
+| **Users** | Список, поиск, статистика, бан/разбан с причиной и доказательствами, история банов, смена роли и пароля, удаление |
+| **Activity** | Журнал действий администраторов: фильтры, сводка, топ действий и администраторов |
+| **Settings** | Maintenance mode и **Roles & access** — права ролей `moderator` и `user` |
 
 Вход в панель использует тот же `/api/v1.0/login`, что и игра; токен хранится в
-`localStorage` под ключом `admin_token`.
+`localStorage` под ключом `admin_token`. После входа панель запрашивает `/admin/me`
+и скрывает недоступные вкладки/кнопки.
+
+### Бан пользователя в панели
+
+Форма бана содержит:
+
+* режим **Temporary / Permanent**;
+* дату и время окончания (или быстрые кнопки `+1 hour`, `+24 hours`, `+7 days`, `+30 days`);
+* обязательную письменную причину (10–2000 символов);
+* обязательные доказательства — до 5 скриншотов/файлов (10 МБ каждый, 40 МБ суммарно).
+
+В статистике пользователя отображается история банов. Изображения открываются во
+встроенном просмотре, остальные файлы скачиваются; старые баны без вложений помечаются
+как legacy.
 
 ---
 
@@ -1199,13 +1333,16 @@ CORS-заголовками для лаунчера. URL собираются н
 
 | Таблица | Назначение | Ключевые поля |
 |---|---|---|
-| `user_accounts` | Аккаунты | `id`, `player_uuid`, `username` (unique, lower-case), `realname`, `hash_password`, `user_role` (`admin`/`user`, по умолчанию `user`), `regdate`, `lastlogin`, `ip`, `regip`, `email`, `device_id`, `PublicKey` |
+| `user_accounts` | Аккаунты | `id`, `player_uuid`, `username` (unique, lower-case), `realname`, `hash_password`, `user_role` (`admin`/`moderator`/`user`, по умолчанию `user`), `regdate`, `lastlogin`, `ip`, `regip`, `email`, `device_id`, `PublicKey`, `token_version` |
 | `user_data` | Статистика игроков | `user_id` (PK и FK), `play_time`, `murders`, `deaths` |
-| `user_bans` | Баны | `user_id` (FK), `reason`, `banned_by`, `created_at`, `expires_at` (NULL — навсегда), `is_active` |
+| `user_ip_history` | История IP | `user_id` (FK), `ip`, `first_seen`, `last_seen`, `seen_count`; до 50 адресов на пользователя |
+| `user_bans` | Баны | `user_id` (FK), `reason` (10–2000 символов), `banned_by`, `created_at`, `expires_at` (NULL — навсегда), `is_active` |
+| `user_ban_evidence` | Доказательства бана | `ban_id` (FK), `file_name`, `content_type`, `size`, `sha256`, `data` (bytea), `created_at` |
+| `role_permissions` | Права ролей | `(role, permission)` — PK; для `moderator` и `user` |
 | `server_manifests` | Игровые серверы | `id`, `name` (уникально), `type` (загрузчик), `app_version` (версия игры), `ip_address`, `is_active`, `build_manifest` (text), `build_id` (привязка сборки, максимум 64) |
 | `server_configs` | Настройки сервера | `server_id` (PK и FK), `type_version` (версия загрузчика), `config_hash_sum` |
 | `global_settings` | Глобальные настройки | `setting_key` (PK), `setting_value` (в том числе `Maintenance`) |
-| `admin_audits` | Аудит действий админов | `actor`, `action`, `target_type`, `target_id`, `details`, `created_at` |
+| `admin_audits` | Аудит действий админов | `actor`, `action`, `target_type`, `target_id`, `details`, `created_at` (индекс для Activity) |
 | `build_instances` | Сборки | `id`, `name`, `mc_version`, `loader_type`, `loader_version`, `status`, `build_id` (unique, максимум 100), `manifest_json` (text), `error_message` (`попытка\|ошибка`), `build_preset_id`, `modpack_import` + колонки живого прогресса |
 | `build_files` | Файлы сборки | `build_id` (FK), `path` (максимум 500), `sha256` (индексирован — дедупликация), `size`, `policy`, `s3_key` |
 | `build_logs` | Журналы сборок | `build_instance_id` (FK, индексирован), `level`, `message`, `created_at` |
@@ -1217,6 +1354,8 @@ CORS-заголовками для лаунчера. URL собираются н
 ```
 user_accounts  1─1  user_data            (каскадное удаление)
 user_accounts  1─N  user_bans            (каскадное удаление)
+user_accounts  1─N  user_ip_history      (каскадное удаление)
+user_bans      1─N  user_ban_evidence    (каскадное удаление)
 server_manifests 1─1 server_configs      (каскадное удаление)
 build_presets  1─N  build_preset_mods    (каскадное удаление)
 build_instances 1─N  build_files          (каскадное удаление)
@@ -1225,7 +1364,7 @@ build_instances N─1  build_presets        (SetNull: сборка пережи�
 server_manifests ──build_id──► build_instances.build_id   (мягкая ссылка, без FK)
 ```
 
-`global_settings` и `admin_audits` самостоятельны.
+`role_permissions`, `global_settings` и `admin_audits` самостоятельны.
 
 ### Идентификаторы
 
@@ -1262,18 +1401,20 @@ Logging__LogLevel__Microsoft.AspNetCore=Warning
 |---|---|
 | Пароли | Только BCrypt-хеши; политика 8–72 байта (UTF-8) |
 | Перебор/энумерация | Для несуществующего логина выполняется «пустая» BCrypt-проверка (выравнивание времени) |
-| Токены | JWT HS256, проверка подписи, издателя, аудитоции и срока |
+| Токены | JWT HS256, проверка подписи, издателя, аудитории и срока |
 | Отзыв сессий | `token_version` в JWT; смена/сброс пароля инкрементирует версию и инвалидирует старые токены (`401 TOKEN_REVOKED`) |
 | Ключ JWT | Приложение отказывается стартовать с ключом короче 32 символов |
-| Авторизация | Роль `admin` проверяется на всех административных эндпоинтах |
+| Авторизация | Роль `admin` и permission-политики для `moderator`/`user`; интерфейс и API проверяют одно и то же право |
+| Иерархия ролей | Неадминистратор не может управлять ролью выше своей, назначать её или менять собственную роль |
 | Состояние аккаунта | Бан/удаление/смена роли/версия токена перепроверяются на каждом защищённом запросе (`AccountBanMiddleware`) |
+| Доказательства бана | Хранятся в PostgreSQL, не в публичном S3; скачивание только через `users.ban` с проверкой владельца |
 | CORS | Только явный allow-list; в Production без него cross-origin запрещён |
 | Security headers | CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS при HTTPS |
 | IP за прокси | `X-Forwarded-*` принимаются только от доверенной сети nginx |
 | Rate limiting | Раздельные политики `api`/`admin`/`auth`/`register`/`static`, ключ — пользователь или подсеть, `Retry-After` + JSON при 429 |
 | Техработы | Блокировка публичного API, админы остаются доступны |
 | Ошибки | Наружу не отдаются внутренние детали, попадает `request_id` |
-| Аудит | Действия админов пишутся в `admin_audits` |
+| Аудит | Действия админов пишутся в `admin_audits` и доступны на странице Activity (`activity.view`) |
 | Регистрация | Лимиты на устройство и IP, валидация deviceID, хеширование пароля |
 | Смена пароля | Пользователь — сам через `PATCH /user/password` (с текущим паролем), админ — через админку; старые сессии отзываются |
 
@@ -1332,6 +1473,10 @@ dotnet ef migrations script --project UnderMineApi/UnderMineApi.csproj
 | `20261106123739_AddRegistrationLimits` | Лимиты регистрации: `regip_prefix`, индексы |
 | `20261106125206_AddAuthHardening` | `token_version` для отзыва JWT |
 | `20261106131612_AddBuildQueryIndexes` | Индексы для пагинации сборок и ретеншена логов |
+| `20261122140646_AddUserIpHistory` | История IP-адресов пользователей |
+| `20261122144821_AddRolePermissions` | Права ролей `moderator`/`user` и дефолты модератора |
+| `20261122150102_AddAdminAuditActivityIndex` | Индекс `admin_audits.created_at` для Activity |
+| `20261122151511_AddBanEvidence` | Доказательства бана в `user_ban_evidence` |
 
 > Миграции применяются автоматически при старте с ретраями
 > (`Database__MigrateRetries` / `Database__MigrateRetryDelaySeconds`). Если все попытки
@@ -1505,10 +1650,12 @@ dotnet list package --vulnerable
 
 ## Известные ограничения
 
-- **Swagger/OpenAPI не настроен.** Документация ведётся в этом файле; при необходимости
-  добавьте `Swashbuckle`/`NSwag` в `Program.cs`.
-- **Форматы ошибок различаются** между эндпоинтами: `{Error, Message}`, `{status, message}`
-  или просто текст. Это исторически сложилось и не унифицировано.
+- **Swagger/OpenAPI доступен только в Development** (`/swagger`); в Production документация
+  ведётся в этом файле.
+- **Доказательства бана хранятся в PostgreSQL** (до 40 МБ на бан). Это защищает скриншоты
+  от публичного CDN, но увеличивает размер БД и бэкапов.
+- **Форматы ошибок исторически различаются** между эндпоинтами: `{Error, Message}`,
+  `{status, message}` или просто текст; новые админские эндпоинты используют единый конверт.
 - **Файлы модов пресетов** ограничены лимитом Kestrel (~128 МБ) по умолчанию, хотя
   сервис допускает до 200 МБ — при необходимости поднимите `MaxRequestBodySize`.
 - **Сборки больших модпаков** (несколько тысяч файлов) чувствительны к длительности этапа

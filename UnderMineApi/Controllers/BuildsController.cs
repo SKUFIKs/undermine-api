@@ -13,6 +13,7 @@ using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers
 {
@@ -48,7 +49,7 @@ namespace UnderMineApi.Controllers
         /// Creates a new build and queues it for background processing.
         /// </summary>
         [HttpPost]
-        [Authorize(Roles = "admin")]
+        [Authorize(Policy = Permissions.BuildsUpload)]
         public async Task<ActionResult<BuildResponse>> CreateBuild(
             [FromBody] CreateBuildRequest request,
             CancellationToken ct)
@@ -130,7 +131,7 @@ namespace UnderMineApi.Controllers
         /// GET /builds?page=1&amp;pageSize=20&amp;status=failed&amp;query=tech
         /// </summary>
         [HttpGet]
-        [Authorize(Roles = "admin")]
+        [Authorize(Policy = Permissions.BuildsUpload)]
         public async Task<ActionResult<PagedResponse<BuildResponse>>> ListBuilds(
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20,
@@ -226,7 +227,7 @@ namespace UnderMineApi.Controllers
         /// Gets build status by ID.
         /// </summary>
         [HttpGet("{id:long}")]
-        [Authorize(Roles = "admin")]
+        [Authorize(Policy = Permissions.BuildsUpload)]
         public async Task<ActionResult<BuildResponse>> GetBuild(long id, CancellationToken ct)
         {
             // Project instead of Include(b => b.Files): a materialized join would ship the
@@ -275,7 +276,7 @@ namespace UnderMineApi.Controllers
         /// only get the newer lines while a build is running.
         /// </summary>
         [HttpGet("{id:long}/logs")]
-        [Authorize(Roles = "admin")]
+        [Authorize(Policy = Permissions.BuildsUpload)]
         public async Task<ActionResult<object>> GetBuildLogs(
             long id, CancellationToken ct, [FromQuery] long afterId = 0, [FromQuery] int limit = 200)
         {
@@ -321,7 +322,7 @@ namespace UnderMineApi.Controllers
         /// Builds that are currently being processed cannot be deleted.
         /// </summary>
         [HttpDelete("{id:long}")]
-        [Authorize(Roles = "admin")]
+        [Authorize(Policy = Permissions.BuildsUpload)]
         public async Task<IActionResult> DeleteBuild(long id, CancellationToken ct)
         {
             var build = await _context.BuildInstances

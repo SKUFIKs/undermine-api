@@ -9,9 +9,13 @@ API для управления пользователями/аккаунтам�
 - `AuthController` — регистрация/вход/проверка токена.
 - `UserController` — данные о пользователе, статистика.
 - `ServersController` — получение списка серверов и конфигов.
-- `AdminController` — администрирование (управление пользователями, серверами, maintenance mode и т.д.).
+- `AdminController` — администрирование пользователей, баны с доказательствами, серверы, maintenance mode.
+- `AdminAccessController` — эффективные права текущего аккаунта и настройка прав ролей.
+- `AdminActivityController` — журнал действий администраторов с фильтрами и сводкой.
+- `AdminBuildEditorController` — файловый редактор сборок.
 - `ConfigCacheService` — in-memory кеш конфигурации серверов с возможностью синхронизации через Redis и механизма pub/sub.
-- EF Core (PostgreSQL) — автоматическое применение миграций: `UserAccount`, `UserData`, `ServerManifest`, `ServerConfigDetails`, `UserBans`, `AdminAudit`, `GlobalSetting`.
+- `PermissionService` — права ролей `moderator`/`user`; роль `admin` неявно имеет все права.
+- EF Core (PostgreSQL) — автоматическое применение миграций: `UserAccount`, `UserData`, `UserIpHistory`, `RolePermission`, `UserBanEvidence`, `ServerManifest`, `ServerConfigDetails`, `UserBans`, `AdminAudit`, `GlobalSetting`.
 
 ## Основные технологии
 
@@ -20,7 +24,10 @@ API для управления пользователями/аккаунтам�
 - Поддержка Redis (опционально) для распределённого кеша конфигураций и pub/sub уведомлений об изменениях.
 - Автоматическое применение EF Core миграций при запуске (`context.Database.Migrate()`).
 - Rate limiting (глобальный middleware) и healthchecks (`/health`).
-- Аудит-лог действий через `AdminAuditService`.
+- Аудит-лог действий через `AdminAuditService`; отдельная страница **Activity** с фильтрами
+  и сводкой.
+- Permission-политики для админ-эндпоинтов: `servers.view/create/edit`, `builds.upload`,
+  `presets.create`, `users.ban/change_password/change_role`, `activity.view`.
 
 ## Зависимости
 
@@ -124,15 +131,51 @@ services:
   - `GET /api/v1.0/servers` — список серверов (кешируется ConfigCacheService).
   - `GET /api/v1.0/servers/{id}` — детали сервера.
 
-- Admin (требуется роль `Admin` в JWT claims)
-  - `GET /api/v1.0/admin/users` — список пользователей (пагинация).
-  - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя.
-  - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя.
-  - `PATCH /api/v1.0/admin/users/{id}/change-password` — смена пароля пользователем.
-  - `POST /api/v1.0/admin/servers` — создание сервера (обновляет кеш и рассылает в Redis для синхронизации).
-  - `PUT /api/v1.0/admin/servers/{id}` — обновление сервера.
-  - `DELETE /api/v1.0/admin/servers/{id}` — удаление сервера.
-  - `POST /api/v1.0/admin/status/maintenance?enabled=true|false` — включение/выключение maintenance mode (сохраняется в `GlobalSettings`).
+- Admin (роли `admin`/`moderator`/`user`, доступ по правам)
+  - `GET /api/v1.0/admin/me` — роль и эффективные права текущей учётной записи
+    (используется админ-панелью для скрытия недоступных разделов и действий).
+  - `GET /api/v1.0/admin/permissions` — список прав и текущие наборы для ролей
+    `moderator` и `user` (только администратор).
+  - `PUT /api/v1.0/admin/permissions/{role}` — заменить набор прав роли
+    `moderator` или `user` телом `{ "permissions": ["servers.view", ...] }`
+    (только администратор). Роль `admin` всегда имеет все права.
+  - `GET /api/v1.0/admin/activity` — журнал действий администраторов (`activity.view`):
+    пагинация, фильтры `actor`, `action`, `targetType`, `query`, глубина `days`,
+    а также сводка (`todayCount`, `last7DaysCount`, `topActions`, `topActors`)
+    и варианты для фильтров.
+  - `GET /api/v1.0/admin/users` — список пользователей (пагинация; право
+    `users.ban`, `users.change_password` или `users.change_role`).
+  - `GET /api/v1.0/admin/users/{id}/statistics` — персональная статистика:
+    дата регистрации, последний вход, playtime, убийства/смерти, текущий бан,
+    история IP-адресов и история банов с причинами, сроками и доказательствами.
+  - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя (`users.ban`).
+    Multipart-запрос: `reason` (10–2000 символов), необязательный `expiresAt`
+    (Unix UTC; пусто = навсегда) и 1–5 файлов `evidence` (до 10 МБ каждый,
+    до 40 МБ суммарно; изображения, PDF, текст/логи, JSON/CSV, ZIP, DOC/DOCX,
+    MP4/WebM). Файлы хранятся в PostgreSQL, а не в публичном S3-бакете.
+  - `GET /api/v1.0/admin/ban-evidence/{id}` — скачивание доказательства
+    (`users.ban`). Доступно только через API с авторизацией.
+  - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя (`users.ban`).
+  - `PATCH /api/v1.0/admin/users/{id}/role` — смена роли на `user`, `moderator`
+    или `admin` (`users.change_role`). Назначать `admin` и менять администраторов
+    может только администратор.
+  - `POST /api/v1.0/admin/users/{id}/delete` — безвозвратное удаление аккаунта:
+    требует `confirmUsername` (повторить username) и `reason` (5–500 символов).
+    Нельзя удалить себя или администратора; сначала нужно снять роль admin.
+    Удаляются статистика и история банов, старые JWT перестают работать,
+    действие пишется в `admin_audits` в той же транзакции. Только администратор.
+  - `PATCH /api/v1.0/admin/users/{id}/change-password` — смена пароля пользователем
+    (`users.change_password`). Пароль администратора может менять только администратор.
+  - `POST /api/v1.0/admin/servers` — создание сервера (`servers.create`; обновляет кеш и рассылает в Redis для синхронизации).
+  - `PUT /api/v1.0/admin/servers/{id}` — обновление сервера (`servers.edit`).
+  - `DELETE /api/v1.0/admin/servers/{id}` — удаление сервера (`servers.edit`).
+  - `POST /api/v1.0/admin/status/maintenance?enabled=true|false` — включение/выключение maintenance mode (только администратор; сохраняется в `GlobalSettings`).
+
+  Права: `servers.view`, `servers.create`, `servers.edit`, `builds.upload`,
+  `presets.create`, `users.ban`, `users.change_password`, `users.change_role`,
+  `activity.view`.
+  Роль `admin` имеет все права неявно; для `moderator` при миграции заводятся
+  права по умолчанию (всё, кроме смены паролей, смены ролей и журнала Activity).
 
 ## Примеры curl
 
@@ -168,7 +211,13 @@ services:
 
 ## Тестирование
 
-Есть базовые юнит-тесты. Можно добавить PR с новыми тестами или исправить существующие issues. Рекомендуется использовать как минимум один тест на каждый критический сценарий для предотвращения регрессий.
+В решении есть проект `UnderMineApi.Tests` (xUnit, SQLite in-memory) — 100+ тестов на
+аутентификацию, безопасность, статистику, удаление аккаунтов, баны с доказательствами,
+права ролей и аудит. Запуск:
+
+```bash
+dotnet test UnderMineApi.sln
+```
 
 ## Лицензия
 

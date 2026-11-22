@@ -1,6 +1,7 @@
 ﻿using UnderMineApi.Models;
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Domain.Entities;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Data
 {
@@ -9,8 +10,11 @@ namespace UnderMineApi.Data
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<UnderMineApi.Domain.Entities.UserAccount> McAuthAccounts { get; set; }
+        public DbSet<UnderMineApi.Domain.Entities.UserIpHistory> UserIpHistory => Set<UnderMineApi.Domain.Entities.UserIpHistory>();
+        public DbSet<UnderMineApi.Domain.Entities.RolePermission> RolePermissions => Set<UnderMineApi.Domain.Entities.RolePermission>();
         public DbSet<ServerManifest> ServerManifests => Set<ServerManifest>();
         public DbSet<UserBans> UserBans => Set<UserBans>();
+        public DbSet<UserBanEvidence> UserBanEvidence => Set<UserBanEvidence>();
         public DbSet<UserData> UserData => Set<UserData>();
         public DbSet<GlobalSetting> GlobalSettings => Set<GlobalSetting>();
         public DbSet<ServerConfigDetails> ServerConfigs => Set<ServerConfigDetails>();
@@ -44,6 +48,35 @@ namespace UnderMineApi.Data
                       .OnDelete(DeleteBehavior.Cascade);
             });
 
+            modelBuilder.Entity<UserIpHistory>(entity =>
+            {
+                entity.ToTable("user_ip_history");
+                entity.Property(h => h.Ip).HasMaxLength(64);
+                entity.HasIndex(h => new { h.UserId, h.Ip }).IsUnique();
+                entity.HasIndex(h => new { h.UserId, h.LastSeen });
+
+                entity.HasOne<UserAccount>()
+                      .WithMany()
+                      .HasForeignKey(h => h.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<RolePermission>(entity =>
+            {
+                entity.ToTable("role_permissions");
+                entity.HasKey(e => new { e.Role, e.Permission });
+                entity.Property(e => e.Role).HasMaxLength(50);
+                entity.Property(e => e.Permission).HasMaxLength(100);
+
+                entity.HasData(Permissions.ModeratorDefaults
+                    .Select(permission => new RolePermission
+                    {
+                        Role = Roles.Moderator,
+                        Permission = permission
+                    })
+                    .ToArray());
+            });
+
             modelBuilder.Entity<ServerManifest>(entity =>
             {
                 entity.ToTable("server_manifests");
@@ -63,6 +96,19 @@ namespace UnderMineApi.Data
                       .WithMany()
                       .HasForeignKey(b => b.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasMany(b => b.Evidence)
+                      .WithOne(e => e.Ban)
+                      .HasForeignKey(e => e.BanId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<UserBanEvidence>(entity =>
+            {
+                entity.ToTable("user_ban_evidence");
+                entity.Property(e => e.FileName).HasMaxLength(255);
+                entity.Property(e => e.ContentType).HasMaxLength(100);
+                entity.Property(e => e.Sha256).HasMaxLength(64);
             });
 
             modelBuilder.Entity<GlobalSetting>(entity =>
@@ -77,6 +123,9 @@ namespace UnderMineApi.Data
                 entity.ToTable("admin_audits");
                 entity.Property(e => e.Actor).HasMaxLength(100);
                 entity.Property(e => e.Action).HasMaxLength(100);
+
+                // Activity page: newest-first paging and date-range filters.
+                entity.HasIndex(e => e.CreatedAt);
             });
 
             modelBuilder.Entity<UnderMineApi.Domain.Entities.BuildInstance>(entity =>

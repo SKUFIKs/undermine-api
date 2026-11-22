@@ -11,6 +11,7 @@ using Minio.Exceptions;
 using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers;
 
@@ -20,7 +21,7 @@ namespace UnderMineApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1.0/admin/builds")]
-[Authorize(Roles = "admin")]
+[Authorize(Policy = Permissions.BuildsUpload)]
 [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminBuildEditorController : ControllerBase
 {

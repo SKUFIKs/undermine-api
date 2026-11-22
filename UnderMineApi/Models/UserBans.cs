@@ -29,5 +29,8 @@ namespace UnderMineApi.Models
 
         [Column("is_active")]
         public bool IsActive { get; set; } = true;
+
+        /// <summary>Evidence files uploaded with the ban (screenshots, logs, documents).</summary>
+        public List<UserBanEvidence> Evidence { get; set; } = new();
     }
 }

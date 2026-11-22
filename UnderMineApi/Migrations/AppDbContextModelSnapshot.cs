@@ -339,6 +339,55 @@ namespace UnderMineApi.Migrations
                     b.ToTable("build_preset_mods", (string)null);
                 });
 
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.RolePermission", b =>
+                {
+                    b.Property<string>("Role")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Permission")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("permission");
+
+                    b.HasKey("Role", "Permission");
+
+                    b.ToTable("role_permissions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.view"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.create"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.edit"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "builds.upload"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "presets.create"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "users.ban"
+                        });
+                });
+
             modelBuilder.Entity("UnderMineApi.Domain.Entities.UserAccount", b =>
                 {
                     b.Property<long>("Id")
@@ -426,6 +475,47 @@ namespace UnderMineApi.Migrations
                     b.ToTable("user_accounts");
                 });
 
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.UserIpHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("FirstSeen")
+                        .HasColumnType("bigint")
+                        .HasColumnName("first_seen");
+
+                    b.Property<string>("Ip")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ip");
+
+                    b.Property<long>("LastSeen")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_seen");
+
+                    b.Property<int>("SeenCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("seen_count");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Ip")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "LastSeen");
+
+                    b.ToTable("user_ip_history", (string)null);
+                });
+
             modelBuilder.Entity("UnderMineApi.Models.AdminAudit", b =>
                 {
                     b.Property<long>("Id")
@@ -464,6 +554,8 @@ namespace UnderMineApi.Migrations
                         .HasColumnName("target_type");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.ToTable("admin_audits", (string)null);
                 });
@@ -557,6 +649,57 @@ namespace UnderMineApi.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("server_manifests", (string)null);
+                });
+
+            modelBuilder.Entity("UnderMineApi.Models.UserBanEvidence", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BanId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ban_id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("content_type");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("created_at");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("data");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<long>("Size")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BanId");
+
+                    b.ToTable("user_ban_evidence", (string)null);
                 });
 
             modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
@@ -667,6 +810,15 @@ namespace UnderMineApi.Migrations
                     b.Navigation("BuildPreset");
                 });
 
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.UserIpHistory", b =>
+                {
+                    b.HasOne("UnderMineApi.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("UnderMineApi.Models.ServerConfigDetails", b =>
                 {
                     b.HasOne("UnderMineApi.Models.ServerManifest", "Server")
@@ -676,6 +828,17 @@ namespace UnderMineApi.Migrations
                         .IsRequired();
 
                     b.Navigation("Server");
+                });
+
+            modelBuilder.Entity("UnderMineApi.Models.UserBanEvidence", b =>
+                {
+                    b.HasOne("UnderMineApi.Models.UserBans", "Ban")
+                        .WithMany("Evidence")
+                        .HasForeignKey("BanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Ban");
                 });
 
             modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
@@ -717,6 +880,11 @@ namespace UnderMineApi.Migrations
             modelBuilder.Entity("UnderMineApi.Models.ServerManifest", b =>
                 {
                     b.Navigation("Config");
+                });
+
+            modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
+                {
+                    b.Navigation("Evidence");
                 });
 #pragma warning restore 612, 618
         }

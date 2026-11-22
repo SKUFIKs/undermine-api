@@ -45,6 +45,9 @@
                     <li><a href="#" data-page="users">
                         <svg class="nav-ico" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                         <span class="nav-txt">Users</span></a></li>
+                    <li><a href="#" data-page="activity">
+                        <svg class="nav-ico" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        <span class="nav-txt">Activity</span></a></li>
                     <li><a href="#" data-page="settings">
                         <svg class="nav-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                         <span class="nav-txt">Settings</span></a></li>
@@ -118,12 +121,11 @@
                     <div class="page-head">
                         <div>
                             <h2>Builds</h2>
-                            <p class="page-sub">Assemble client packs and import Modrinth (.mrpack) or CurseForge (.zip) modpacks</p>
+                            <p class="page-sub">Assemble client packs and import Modrinth or CurseForge modpacks</p>
                         </div>
                         <div class="page-actions">
                             <button id="add-build-btn" class="btn btn-primary">+ Create Build</button>
-                            <button id="import-modpack-btn" class="btn">Import Modpack</button>
-                            <button id="import-curseforge-btn" class="btn">Import from CurseForge</button>
+                            <button id="import-modpack-btn" class="btn" title="Import a Modrinth modpack by slug/ID or a Modrinth/CurseForge archive">Import modpack</button>
                         </div>
                     </div>
                     <div class="table-card">
@@ -220,6 +222,90 @@
                     </div>
                 </section>
 
+                <!-- Activity -->
+                <section id="page-activity" class="page">
+                    <div class="page-head">
+                        <div>
+                            <h2>Activity</h2>
+                            <p class="page-sub">Administrative actions and changes made in the panel</p>
+                        </div>
+                        <div class="page-actions">
+                            <button id="activity-refresh-btn" class="btn">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Total events</h3>
+                            <p id="activity-stat-total">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Today</h3>
+                            <p id="activity-stat-today">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Last 7 days</h3>
+                            <p id="activity-stat-week">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Unique actors</h3>
+                            <p id="activity-stat-actors">-</p>
+                        </div>
+                    </div>
+
+                    <div class="activity-layout">
+                        <div class="table-card">
+                            <div class="activity-toolbar">
+                                <div class="search-bar activity-search">
+                                    <input type="text" id="activity-search" placeholder="Search actor, action or details...">
+                                </div>
+                                <select id="activity-range" class="activity-select">
+                                    <option value="0" selected>All time</option>
+                                    <option value="1">Last 24 hours</option>
+                                    <option value="7">Last 7 days</option>
+                                    <option value="30">Last 30 days</option>
+                                </select>
+                                <select id="activity-action-filter" class="activity-select">
+                                    <option value="">All actions</option>
+                                </select>
+                                <select id="activity-actor-filter" class="activity-select">
+                                    <option value="">All actors</option>
+                                </select>
+                            </div>
+                            <table id="activity-table">
+                                <thead>
+                                    <tr>
+                                        <th>When</th>
+                                        <th>Actor</th>
+                                        <th>Action</th>
+                                        <th>Target</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                            <div class="table-pager">
+                                <button id="activity-prev" class="btn btn-sm" disabled>Previous</button>
+                                <span id="activity-page-info" class="muted">Page 1</span>
+                                <button id="activity-next" class="btn btn-sm" disabled>Next</button>
+                                <span class="spacer"></span>
+                                <button id="activity-clear" class="btn btn-sm">Clear filters</button>
+                            </div>
+                        </div>
+
+                        <aside class="activity-side">
+                            <div class="activity-panel">
+                                <h3>Top actions</h3>
+                                <div id="activity-top-actions"></div>
+                            </div>
+                            <div class="activity-panel">
+                                <h3>Top actors</h3>
+                                <div id="activity-top-actors"></div>
+                            </div>
+                        </aside>
+                    </div>
+                </section>
+
                 <!-- Settings -->
                 <section id="page-settings" class="page">
                     <div class="page-head">
@@ -235,6 +321,14 @@
                             <span class="slider"></span>
                         </label>
                         <p class="hint">While maintenance is on, regular users get 503 on /api requests. Admins keep full access.</p>
+                    </div>
+                    <div class="settings-group">
+                        <h3>Roles &amp; access</h3>
+                        <p class="hint">
+                            Administrators always have every permission and cannot be restricted.
+                            Configure what moderators and regular users may do in the admin panel.
+                        </p>
+                        <div id="role-permissions"></div>
                     </div>
                 </section>
             </main>

@@ -1,6 +1,7 @@
 using Asp.Versioning;
 using DotNetEnv;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -16,7 +17,9 @@ using UnderMineApi.HealthChecks;
 using UnderMineApi.Middleware;
 using UnderMineApi.Options;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Interfaces;
 using UnderMineApi.Services.Registration;
+using UnderMineApi.Services.Security;
 
 DotNetEnv.Env.Load();
 
@@ -230,6 +233,34 @@ try
             };
         });
 
+    // Role/permission model for the admin area. The admin role is implicit and always passes;
+    // moderator/user permissions are stored in role_permissions and edited in Settings.
+    builder.Services.AddScoped<IPermissionService, PermissionService>();
+    builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+    builder.Services.AddScoped<IAuthorizationHandler, AnyPermissionAuthorizationHandler>();
+
+    builder.Services.AddAuthorization(options =>
+    {
+        foreach (var permission in Permissions.AllKeys)
+        {
+            options.AddPolicy(permission, policy =>
+                policy.Requirements.Add(new PermissionRequirement(permission)));
+        }
+
+        options.AddPolicy(Permissions.UsersViewPolicy, policy =>
+            policy.Requirements.Add(new AnyPermissionRequirement(
+                Permissions.UsersBan,
+                Permissions.UsersChangePassword,
+                Permissions.UsersChangeRole)));
+
+        options.AddPolicy(Permissions.AdminAreaPolicy, policy =>
+            policy.Requirements.Add(new AnyPermissionRequirement(
+                Permissions.AllKeys.ToArray())));
+
+        options.AddPolicy(Permissions.SettingsManagePolicy, policy =>
+            policy.RequireRole(Roles.Admin));
+    });
+
     // CORS: only explicitly configured origins in Production; same-origin otherwise.
     builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 
@@ -237,6 +268,7 @@ try
     // Build services
     builder.Services.AddScoped<EngineDownloadService>();
     builder.Services.AddScoped<S3StorageService>();
+    builder.Services.AddScoped<BanEvidenceService>();
     builder.Services.AddScoped<BuildManifestService>();
     builder.Services.AddScoped<BuildEditorService>();
     builder.Services.AddHttpClient<ModrinthService>();
