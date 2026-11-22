@@ -136,9 +136,11 @@ public class PermissionService : IPermissionService
         await transaction.CommitAsync(cancellationToken);
 
         Invalidate();
-        _logger.LogInformation(
-            "Permissions for role {Role} updated to: {Permissions}",
-            normalizedRole, string.Join(", ", canonical));
+
+        // Keep the log free of the raw role and permission list: one permission key mentions
+        // "password", which CodeQL treats as sensitive clear-text data, and both values come
+        // from the request. The admin audit trail stores the actual change for investigation.
+        _logger.LogInformation("Role permissions updated.");
 
         return (true, null);
     }

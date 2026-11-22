@@ -164,8 +164,8 @@ public class AdminAccessController : ControllerBase
             cancellationToken);
 
         _logger.LogInformation(
-            "Admin {Actor} updated permissions for role {Role}: {Permissions}",
-            Actor, LogSanitizer.Clean(role), string.Join(", ", updated));
+            "Admin {Actor} updated permissions for role {Role}.",
+            Actor, LogSanitizer.Clean(role));
 
         return Ok(new
         {
