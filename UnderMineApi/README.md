@@ -128,6 +128,11 @@ services:
   - `GET /api/v1.0/admin/users` — список пользователей (пагинация).
   - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя.
   - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя.
+  - `POST /api/v1.0/admin/users/{id}/delete` — безвозвратное удаление аккаунта:
+    требует `confirmUsername` (повторить username) и `reason` (5–500 символов).
+    Нельзя удалить себя или администратора; сначала нужно снять роль admin.
+    Удаляются статистика и история банов, старые JWT перестают работать,
+    действие пишется в `admin_audits` в той же транзакции.
   - `PATCH /api/v1.0/admin/users/{id}/change-password` — смена пароля пользователем.
   - `POST /api/v1.0/admin/servers` — создание сервера (обновляет кеш и рассылает в Redis для синхронизации).
   - `PUT /api/v1.0/admin/servers/{id}` — обновление сервера.

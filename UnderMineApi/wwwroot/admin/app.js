@@ -2103,6 +2103,9 @@ async function loadUsers() {
                         : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`}
                     <button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>
                     <button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>
+                    ${String(u.role || '').toLowerCase() === 'admin'
+                        ? ''
+                        : `<button class="btn btn-sm btn-danger" data-action="delete-user" data-id="${u.id}" data-username="${esc(u.username)}">Delete</button>`}
                 </td>
             </tr>`;
         }).join('');
@@ -2282,6 +2285,77 @@ async function confirmPassword(id) {
     }
 }
 
+function deleteUser(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const username = el && el.dataset ? (el.dataset.username || '') : '';
+    if (!id || !username) return;
+
+    showModal(`
+        <h3>Delete account: ${esc(username)}</h3>
+        <p class="hint" style="color: var(--danger, #e5484d)">
+            This permanently deletes the account, its statistics, its ban history and all of its
+            sessions. This action cannot be undone.
+        </p>
+        <div class="form-group">
+            <label>Type <strong>${esc(username)}</strong> to confirm</label>
+            <input type="text" id="delete-confirm-username" autocomplete="off" spellcheck="false" placeholder="${esc(username)}">
+        </div>
+        <div class="form-group">
+            <label>Reason (required, at least 5 characters)</label>
+            <textarea id="delete-reason" rows="3" maxlength="500" placeholder="Why is this account being deleted?"></textarea>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-danger" data-action="confirm-delete-user" data-id="${id}" disabled>Delete permanently</button>
+            <button class="btn" data-action="close-modal">Cancel</button>
+        </div>
+    `);
+
+    const input = document.getElementById('delete-confirm-username');
+    const reason = document.getElementById('delete-reason');
+    const button = document.querySelector('#modal-body [data-action="confirm-delete-user"]');
+    const sync = () => {
+        if (!button) return;
+        button.disabled =
+            input.value.trim().toLowerCase() !== username.trim().toLowerCase() ||
+            reason.value.trim().length < 5;
+    };
+    input.addEventListener('input', sync);
+    reason.addEventListener('input', sync);
+    input.focus();
+}
+
+async function confirmDeleteUser(id) {
+    const input = document.getElementById('delete-confirm-username');
+    const reason = document.getElementById('delete-reason');
+    const button = document.querySelector('#modal-body [data-action="confirm-delete-user"]');
+    const confirmUsername = input ? input.value.trim() : '';
+    const deletionReason = reason ? reason.value.trim() : '';
+
+    if (!confirmUsername) {
+        toast('error', 'Type the username to confirm.');
+        return;
+    }
+    if (deletionReason.length < 5) {
+        toast('error', 'Provide a reason of at least 5 characters.');
+        return;
+    }
+
+    if (button) button.disabled = true;
+
+    try {
+        await api(`/admin/users/${id}/delete`, {
+            method: 'POST',
+            body: JSON.stringify({ confirmUsername, reason: deletionReason })
+        });
+        closeModal();
+        toast('success', 'User permanently deleted.');
+        await loadUsers();
+    } catch (e) {
+        if (button) button.disabled = false;
+        toast('error', e.message);
+    }
+}
+
 // ---------- wiring ----------
 
 document.getElementById('add-server-btn').addEventListener('click', addServer);
@@ -2383,6 +2457,8 @@ document.addEventListener('click', (event) => {
         case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
         case 'confirm-role': confirmRole(Number(button.dataset.id)); break;
         case 'confirm-password': confirmPassword(Number(button.dataset.id)); break;
+        case 'delete-user': deleteUser(button); break;
+        case 'confirm-delete-user': confirmDeleteUser(Number(button.dataset.id)); break;
         case 'close-modal': closeModal(); break;
         case 'view-build': viewBuild(button); break;
         case 'view-logs': viewBuildLogs(button); break;

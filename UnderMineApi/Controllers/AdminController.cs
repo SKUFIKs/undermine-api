@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using UnderMineApi.Data;
 using UnderMineApi.DTOs;
 using UnderMineApi.Models;
@@ -45,6 +46,13 @@ namespace UnderMineApi.Controllers
         }
 
         private string GetActor() => LogSanitizer.Clean(User?.Identity?.Name ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "system");
+
+        private long? GetActorId()
+        {
+            var value = User?.FindFirst("UserId")?.Value
+                        ?? User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            return long.TryParse(value, out var id) ? id : null;
+        }
 
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers([FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken cancellationToken = default)
@@ -133,6 +141,12 @@ namespace UnderMineApi.Controllers
                         return BadRequest(new { Error = result.Error, Message = "Invalid role. Available roles: 'admin', 'user'." });
                     }
 
+                    if (result.Error == "LAST_ADMIN")
+                    {
+                        _logger.LogWarning("Admin {Actor} failed to demote the last administrator {UserId}", actor, id);
+                        return Conflict(new { Error = result.Error, Message = "Cannot demote the last administrator. Promote another admin first." });
+                    }
+
                     _logger.LogError("Admin {Actor} failed to change role for user {UserId}: {Error}", actor, id, result.Error);
                     return StatusCode(500, new { Error = "INTERNAL_ERROR", Message = "An internal server error occurred." });
                 }
@@ -171,6 +185,78 @@ namespace UnderMineApi.Controllers
 
                 _logger.LogInformation("Admin {Actor} successfully changed password for user {UserId}", actor, id);
                 return Ok(new { Message = "Password changed successfully" });
+            }
+        }
+
+        [HttpPost("users/{id}/delete")]
+        public async Task<IActionResult> DeleteUser(long id, [FromBody] DeleteUserRequestDto request, CancellationToken cancellationToken = default)
+        {
+            var requestId = HttpContext.Items.ContainsKey("RequestId") ? HttpContext.Items["RequestId"]?.ToString() : null;
+            using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
+            {
+                var actor = GetActor();
+                var actorId = GetActorId();
+                if (actorId == null)
+                    return Unauthorized(new { Error = "UNAUTHORIZED", Message = "The current administrator could not be identified." });
+
+                _logger.LogInformation(
+                    "Admin {Actor} permanently deleting user {UserId}. Reason: {Reason}",
+                    actor, id, LogSanitizer.Clean(request.Reason));
+
+                var result = await _userService.DeleteUserAsync(
+                    id,
+                    request.ConfirmUsername,
+                    request.Reason,
+                    actorId.Value,
+                    actor,
+                    cancellationToken);
+
+                if (!result.Success)
+                {
+                    _logger.LogWarning("Admin {Actor} failed to delete user {UserId}: {Error}", actor, id, result.Error);
+
+                    return result.Error switch
+                    {
+                        "USER_NOT_FOUND" => NotFound(new
+                        {
+                            Error = result.Error,
+                            Message = "User not found."
+                        }),
+                        "CONFIRMATION_MISMATCH" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "Type the username exactly to confirm deletion."
+                        }),
+                        "CANNOT_DELETE_SELF" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "You cannot delete your own account."
+                        }),
+                        "CANNOT_DELETE_ADMIN" => Conflict(new
+                        {
+                            Error = result.Error,
+                            Message = "Demote the administrator to user before deleting the account."
+                        }),
+                        "INVALID_REASON" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "Provide a reason of at least 5 characters."
+                        }),
+                        "USER_HAS_REFERENCES" => Conflict(new
+                        {
+                            Error = result.Error,
+                            Message = "The account still has related records and cannot be deleted."
+                        }),
+                        _ => StatusCode(500, new
+                        {
+                            Error = "INTERNAL_ERROR",
+                            Message = "An internal server error occurred."
+                        })
+                    };
+                }
+
+                _logger.LogInformation("Admin {Actor} permanently deleted user {UserId}", actor, id);
+                return Ok(new { Message = "User deleted" });
             }
         }
 

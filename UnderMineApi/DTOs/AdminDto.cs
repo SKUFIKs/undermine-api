@@ -52,6 +52,22 @@ namespace UnderMineApi.DTOs
     }
 
     /// <summary>
+    /// Confirmation payload for irreversible account deletion. The caller must retype the
+    /// target username and provide a reason; both are checked server-side and audited.
+    /// </summary>
+    public class DeleteUserRequestDto
+    {
+        [Required(AllowEmptyStrings = false)]
+        [MaxLength(100)]
+        public string ConfirmUsername { get; set; } = string.Empty;
+
+        [Required(AllowEmptyStrings = false)]
+        [MinLength(5)]
+        [MaxLength(500)]
+        public string Reason { get; set; } = string.Empty;
+    }
+
+    /// <summary>
     /// Server configuration links as exposed to the admin panel.
     /// "LoaderVersion" is the loader version (stored as TypeVersion in the database).
     /// </summary>

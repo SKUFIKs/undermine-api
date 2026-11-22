@@ -20,6 +20,18 @@ namespace UnderMineApi.Services.Interfaces
         Task<(bool Success, string? Error)> ChangePasswordAsync(long id, string newPassword, string actor, CancellationToken cancellationToken = default);
         Task<(bool Success, string? Error)> ChangeUserRoleAsync(long id, string newRole, string actor, CancellationToken cancellationToken = default);
 
+        /// <summary>
+        /// Permanently deletes an account, its stats and its ban history. Refuses to delete the
+        /// caller, administrators and accounts that still have database references.
+        /// </summary>
+        Task<(bool Success, string? Error)> DeleteUserAsync(
+            long id,
+            string confirmUsername,
+            string reason,
+            long actorUserId,
+            string actor,
+            CancellationToken cancellationToken = default);
+
         /// <summary>Changes the caller's own password (requires the current one) and revokes old tokens.</summary>
         Task<ChangeOwnPasswordResult> ChangeOwnPasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken cancellationToken = default);
     }

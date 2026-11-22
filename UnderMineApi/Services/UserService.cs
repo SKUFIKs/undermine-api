@@ -159,6 +159,18 @@ namespace UnderMineApi.Services
                 return (false, "INVALID_ROLE");
 
             string oldRole = user.Role;
+
+            // Demoting the last administrator would leave the installation without an admin.
+            // Deleting an admin is blocked entirely; the admin must be demoted first.
+            if (string.Equals(oldRole, "admin", StringComparison.OrdinalIgnoreCase) &&
+                normalizedRole != "admin")
+            {
+                var otherAdmins = await _context.McAuthAccounts
+                    .CountAsync(u => u.Id != id && u.Role.ToLower() == "admin", cancellationToken);
+                if (otherAdmins == 0)
+                    return (false, "LAST_ADMIN");
+            }
+
             user.Role = normalizedRole;
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -171,6 +183,104 @@ namespace UnderMineApi.Services
                 LogSanitizer.Clean(id), LogSanitizer.Clean(oldRole), LogSanitizer.Clean(normalizedRole), LogSanitizer.Clean(actor));
 
             await _audit.LogAsync(actor, "change_role", "user", id, $"Role changed from {oldRole} to {normalizedRole}", cancellationToken);
+
+            return (true, null);
+        }
+
+        public async Task<(bool Success, string? Error)> DeleteUserAsync(
+            long id,
+            string confirmUsername,
+            string reason,
+            long actorUserId,
+            string actor,
+            CancellationToken cancellationToken = default)
+        {
+            if (id == actorUserId)
+                return (false, "CANNOT_DELETE_SELF");
+
+            var user = await _context.McAuthAccounts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+
+            if (user == null)
+                return (false, "USER_NOT_FOUND");
+
+            if (!string.Equals(
+                    user.Username.Trim(),
+                    (confirmUsername ?? string.Empty).Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, "CONFIRMATION_MISMATCH");
+            }
+
+            // An admin must be demoted first. This also prevents deleting the last admin:
+            // ChangeUserRoleAsync refuses to demote the last admin.
+            if (string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase))
+                return (false, "CANNOT_DELETE_ADMIN");
+
+            var cleanReason = LogSanitizer.Clean(reason ?? string.Empty).Trim();
+            if (cleanReason.Length < 5)
+                return (false, "INVALID_REASON");
+
+            var actorName = LogSanitizer.Clean(actor);
+            if (actorName.Length > 100)
+                actorName = actorName[..100];
+
+            var username = LogSanitizer.Clean(user.Username);
+
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+            try
+            {
+                // Remove owned rows explicitly in addition to the configured cascade, so the
+                // delete also works for databases created before the cascade was added.
+                await _context.UserBans
+                    .Where(b => b.UserId == id)
+                    .ExecuteDeleteAsync(cancellationToken);
+
+                await _context.UserData
+                    .Where(s => s.AccountId == id)
+                    .ExecuteDeleteAsync(cancellationToken);
+
+                var deleted = await _context.McAuthAccounts
+                    .Where(u => u.Id == id)
+                    .ExecuteDeleteAsync(cancellationToken);
+
+                if (deleted == 0)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (false, "USER_NOT_FOUND");
+                }
+
+                // The audit row is written in the same transaction, so an audit failure rolls
+                // the deletion back instead of leaving an untraceable removal.
+                _context.AdminAudits.Add(new AdminAudit
+                {
+                    Actor = actorName,
+                    Action = "delete_user",
+                    TargetType = "user",
+                    TargetId = id,
+                    Details = $"username={username}; reason={cleanReason}",
+                    CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                });
+
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Failed to delete user {UserId}; related records may still reference it", id);
+                return (false, "USER_HAS_REFERENCES");
+            }
+
+            // Invalidate after commit: the next request carrying an old JWT sees a missing
+            // account (AccountBanMiddleware) and returns 401.
+            _access.Invalidate(id);
+
+            _logger.LogInformation(
+                "User {UserId} ({Username}) permanently deleted by {Actor}. Reason: {Reason}",
+                id, username, actorName, cleanReason);
 
             return (true, null);
         }
