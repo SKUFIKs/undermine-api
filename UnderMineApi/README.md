@@ -9,9 +9,13 @@ API для управления пользователями/аккаунтам�
 - `AuthController` — регистрация/вход/проверка токена.
 - `UserController` — данные о пользователе, статистика.
 - `ServersController` — получение списка серверов и конфигов.
-- `AdminController` — администрирование (управление пользователями, серверами, maintenance mode и т.д.).
+- `AdminController` — администрирование пользователей, баны с доказательствами, серверы, maintenance mode.
+- `AdminAccessController` — эффективные права текущего аккаунта и настройка прав ролей.
+- `AdminActivityController` — журнал действий администраторов с фильтрами и сводкой.
+- `AdminBuildEditorController` — файловый редактор сборок.
 - `ConfigCacheService` — in-memory кеш конфигурации серверов с возможностью синхронизации через Redis и механизма pub/sub.
-- EF Core (PostgreSQL) — автоматическое применение миграций: `UserAccount`, `UserData`, `ServerManifest`, `ServerConfigDetails`, `UserBans`, `AdminAudit`, `GlobalSetting`.
+- `PermissionService` — права ролей `moderator`/`user`; роль `admin` неявно имеет все права.
+- EF Core (PostgreSQL) — автоматическое применение миграций: `UserAccount`, `UserData`, `UserIpHistory`, `RolePermission`, `UserBanEvidence`, `ServerManifest`, `ServerConfigDetails`, `UserBans`, `AdminAudit`, `GlobalSetting`.
 
 ## Основные технологии
 
@@ -20,7 +24,10 @@ API для управления пользователями/аккаунтам�
 - Поддержка Redis (опционально) для распределённого кеша конфигураций и pub/sub уведомлений об изменениях.
 - Автоматическое применение EF Core миграций при запуске (`context.Database.Migrate()`).
 - Rate limiting (глобальный middleware) и healthchecks (`/health`).
-- Аудит-лог действий через `AdminAuditService`.
+- Аудит-лог действий через `AdminAuditService`; отдельная страница **Activity** с фильтрами
+  и сводкой.
+- Permission-политики для админ-эндпоинтов: `servers.view/create/edit`, `builds.upload`,
+  `presets.create`, `users.ban/change_password/change_role`, `activity.view`.
 
 ## Зависимости
 
@@ -124,7 +131,7 @@ services:
   - `GET /api/v1.0/servers` — список серверов (кешируется ConfigCacheService).
   - `GET /api/v1.0/servers/{id}` — детали сервера.
 
-- Admin (роли `admin` и `moderator`, доступ по правам)
+- Admin (роли `admin`/`moderator`/`user`, доступ по правам)
   - `GET /api/v1.0/admin/me` — роль и эффективные права текущей учётной записи
     (используется админ-панелью для скрытия недоступных разделов и действий).
   - `GET /api/v1.0/admin/permissions` — список прав и текущие наборы для ролей
@@ -139,8 +146,8 @@ services:
   - `GET /api/v1.0/admin/users` — список пользователей (пагинация; право
     `users.ban`, `users.change_password` или `users.change_role`).
   - `GET /api/v1.0/admin/users/{id}/statistics` — персональная статистика:
-    дата регистрации, последний вход, playtime, убийства/смерти, текущий бан
-    и история IP-адресов с датами первого/последнего входа и количеством входов.
+    дата регистрации, последний вход, playtime, убийства/смерти, текущий бан,
+    история IP-адресов и история банов с причинами, сроками и доказательствами.
   - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя (`users.ban`).
     Multipart-запрос: `reason` (10–2000 символов), необязательный `expiresAt`
     (Unix UTC; пусто = навсегда) и 1–5 файлов `evidence` (до 10 МБ каждый,
@@ -204,7 +211,13 @@ services:
 
 ## Тестирование
 
-Есть базовые юнит-тесты. Можно добавить PR с новыми тестами или исправить существующие issues. Рекомендуется использовать как минимум один тест на каждый критический сценарий для предотвращения регрессий.
+В решении есть проект `UnderMineApi.Tests` (xUnit, SQLite in-memory) — 100+ тестов на
+аутентификацию, безопасность, статистику, удаление аккаунтов, баны с доказательствами,
+права ролей и аудит. Запуск:
+
+```bash
+dotnet test UnderMineApi.sln
+```
 
 ## Лицензия
 
