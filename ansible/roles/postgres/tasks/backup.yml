@@ -68,6 +68,9 @@
           Port {{ hostvars['prod-3-rf'].ansible_port | default(22) }}
           BatchMode yes
           StrictHostKeyChecking accept-new
+          # OpenSSH 10 starts with post-quantum KEX; the primary<->DR path
+          # resets those handshakes. Curve25519 is supported on both ends.
+          KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
   when: inventory_hostname == 'prod-1-se'
 
 - name: Configure SSH options for pgBackRest on DR
@@ -83,6 +86,9 @@
           Port {{ hostvars['prod-1-se'].ansible_port | default(22) }}
           BatchMode yes
           StrictHostKeyChecking accept-new
+          # OpenSSH 10 starts with post-quantum KEX; the DR->primary path
+          # resets those handshakes. Curve25519 is supported on both ends.
+          KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
   when: inventory_hostname == 'prod-3-rf'
 
 - name: Configure pgBackRest on Primary
