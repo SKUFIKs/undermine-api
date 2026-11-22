@@ -470,6 +470,7 @@ body {
     grid-template-columns: minmax(0, 1fr) 310px;
     gap: 16px;
     align-items: start;
+    margin-top: 16px;
 }
 
 .activity-toolbar {
