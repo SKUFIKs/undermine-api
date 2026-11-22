@@ -11,6 +11,29 @@ let searchTimer = null;
 let userQuery = '';
 let serverBuilds = []; // completed builds offered by the server-modal build picker
 
+// Effective access of the signed-in account, loaded from /admin/me. The admin role always
+// has every permission; moderator/user permissions are configured in Settings.
+let myPermissions = new Set();
+let myRole = '';
+let isAdmin = false;
+
+function can(permission) {
+    return isAdmin || myPermissions.has(permission);
+}
+
+function roleRank(role) {
+    switch (String(role || '').toLowerCase()) {
+        case 'admin': return 3;
+        case 'moderator': return 2;
+        case 'user': return 1;
+        default: return 0;
+    }
+}
+
+function canManageRole(role) {
+    return isAdmin || roleRank(role) <= roleRank(myRole);
+}
+
 // Build editor state (modal). The file list is loaded once per build and kept in memory;
 // editing a file updates both the list entry and the stored manifest through the API.
 let editorBuild = null;
@@ -35,6 +58,13 @@ function esc(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function roleStatusClass(role) {
+    const value = String(role || '').toLowerCase();
+    if (value === 'admin') return 'status-role-admin';
+    if (value === 'moderator') return 'status-role-moderator';
+    return 'status-role-user';
 }
 
 function val(id) {
@@ -155,7 +185,7 @@ const API_ERROR_TEXT = {
     'INVALID_FILE_TYPE': 'Only .mrpack or .zip (CurseForge) files are accepted.',
     'VALIDATION_ERROR': 'Validation failed — check the form fields.',
     'UNAUTHORIZED': 'Your session is not valid. Please sign in again.',
-    'FORBIDDEN': 'Admin access is required for this action.',
+    'FORBIDDEN': 'You do not have permission to perform this action.',
     'NOT_FOUND': 'The requested record was not found.',
     'RATE_LIMITED': 'Too many requests — wait a few seconds and try again.',
     'MAINTENANCE': 'The API is in maintenance mode.'
@@ -241,19 +271,70 @@ async function api(path, options = {}) {
 
 // ---------- navigation ----------
 
+function selectPage(page) {
+    document.querySelectorAll('.sidebar a').forEach(l =>
+        l.classList.toggle('active', l.dataset.page === page));
+    document.querySelectorAll('.page').forEach(p =>
+        p.classList.toggle('active', p.id === `page-${page}`));
+}
+
 document.querySelectorAll('.sidebar a').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
         const page = link.dataset.page;
-        document.querySelectorAll('.sidebar a').forEach(l => l.classList.remove('active'));
-        link.classList.add('active');
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.getElementById(`page-${page}`).classList.add('active');
+        selectPage(page);
         loadPage(page);
     });
 });
 
+function pageAllowed(page) {
+    switch (page) {
+        case 'dashboard': return true;
+        case 'servers': return can('servers.view') || can('servers.create') || can('servers.edit');
+        case 'builds': return can('builds.upload');
+        case 'presets': return can('presets.create');
+        case 'users': return can('users.view');
+        case 'settings': return isAdmin;
+        default: return false;
+    }
+}
+
+async function loadAccess() {
+    const data = await api('/admin/me');
+    isAdmin = !!data.isAdmin;
+    myRole = String(data.role || '').toLowerCase();
+    myPermissions = new Set(data.permissions || []);
+    applyAccess();
+    return data;
+}
+
+function applyAccess() {
+    document.querySelectorAll('.sidebar a[data-page]').forEach(link => {
+        link.parentElement.style.display = pageAllowed(link.dataset.page) ? '' : 'none';
+    });
+
+    const toggle = (id, allowed) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = allowed ? '' : 'none';
+    };
+
+    toggle('add-server-btn', can('servers.create'));
+    toggle('add-build-btn', can('builds.upload'));
+    toggle('import-modpack-btn', can('builds.upload'));
+    toggle('add-preset-btn', can('presets.create'));
+
+    if (!pageAllowed(currentPage)) {
+        selectPage('dashboard');
+        currentPage = 'dashboard';
+    }
+}
+
 async function loadPage(page) {
+    if (!pageAllowed(page)) {
+        selectPage('dashboard');
+        page = 'dashboard';
+    }
+
     if (page !== 'builds') stopBuildsRefresh();
     currentPage = page;
     switch (page) {
@@ -269,22 +350,37 @@ async function loadPage(page) {
 // ---------- dashboard ----------
 
 async function loadDashboard() {
-    try {
-        const [users, servers, builds, maintenance] = await Promise.all([
-            api('/admin/users?page=1&pageSize=1'),
-            api('/admin/servers'),
-            api('/builds?page=1&pageSize=1'),
-            api('/admin/status/maintenance')
-        ]);
-        document.getElementById('stat-users').textContent = users.totalCount || 0;
-        document.getElementById('stat-servers').textContent = (servers || []).filter(s => s.isActive).length;
-        document.getElementById('stat-builds').textContent = (builds && builds.totalCount) || 0;
-        const mt = document.getElementById('stat-maintenance');
-        mt.textContent = maintenance.isMaintenance ? 'ON' : 'OFF';
-        mt.className = maintenance.isMaintenance ? 'is-on' : 'is-off';
-    } catch (e) {
-        console.error(e);
-        toast('error', 'Failed to load dashboard stats: ' + e.message);
+    const [users, servers, builds, maintenance] = await Promise.allSettled([
+        can('users.view')
+            ? api('/admin/users?page=1&pageSize=1')
+            : Promise.reject(new Error('forbidden')),
+        can('servers.view')
+            ? api('/admin/servers')
+            : Promise.reject(new Error('forbidden')),
+        can('builds.upload')
+            ? api('/builds?page=1&pageSize=1')
+            : Promise.reject(new Error('forbidden')),
+        isAdmin
+            ? api('/admin/status/maintenance')
+            : Promise.reject(new Error('forbidden'))
+    ]);
+
+    document.getElementById('stat-users').textContent =
+        users.status === 'fulfilled' ? (users.value.totalCount || 0) : '—';
+    document.getElementById('stat-servers').textContent =
+        servers.status === 'fulfilled'
+            ? (servers.value || []).filter(s => s.isActive).length
+            : '—';
+    document.getElementById('stat-builds').textContent =
+        builds.status === 'fulfilled' ? ((builds.value && builds.value.totalCount) || 0) : '—';
+
+    const mt = document.getElementById('stat-maintenance');
+    if (maintenance.status === 'fulfilled') {
+        mt.textContent = maintenance.value.isMaintenance ? 'ON' : 'OFF';
+        mt.className = maintenance.value.isMaintenance ? 'is-on' : 'is-off';
+    } else {
+        mt.textContent = '—';
+        mt.className = '';
     }
 }
 
@@ -375,10 +471,10 @@ async function loadServers() {
                 <td>${buildBadge(s.buildId)}</td>
                 <td>${esc(s.ipAddress)}</td>
                 <td><span class="status ${s.isActive ? 'status-active' : 'status-inactive'}">${s.isActive ? 'Active' : 'Inactive'}</span></td>
-                <td>
-                    <button class="btn btn-sm" data-action="edit-server" data-id="${s.id}">Edit</button>
-                    <button class="btn btn-sm btn-danger" data-action="delete-server" data-id="${s.id}">Delete</button>
-                </td>
+                <td>${can('servers.edit')
+                    ? `<button class="btn btn-sm" data-action="edit-server" data-id="${s.id}">Edit</button>
+                       <button class="btn btn-sm btn-danger" data-action="delete-server" data-id="${s.id}">Delete</button>`
+                    : '—'}</td>
             </tr>
         `).join('');
     } catch (e) {
@@ -2114,27 +2210,41 @@ async function loadUsers() {
             const banTitle = banned
                 ? `Ban reason: ${esc(u.banReason || 'no reason')}, ${fmtBanExpiry(u.banExpiresAt)}`
                 : '';
-            const roleClass = u.role === 'admin' ? 'status-role-admin' : 'status-role-user';
+            const roleClass = roleStatusClass(u.role);
+            const targetIsAdmin = String(u.role || '').toLowerCase() === 'admin';
+            const manageable = canManageRole(u.role);
+            const actions = [];
+
+            if (manageable) {
+                if (can('users.ban')) {
+                    actions.push(banned
+                        ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
+                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`);
+                }
+                if (can('users.change_role')) {
+                    actions.push(`<button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>`);
+                }
+                if (can('users.change_password')) {
+                    actions.push(`<button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>`);
+                }
+            }
+            if (isAdmin && !targetIsAdmin) {
+                actions.push(`<button class="btn btn-sm btn-danger" data-action="delete-user" data-id="${u.id}" data-username="${esc(u.username)}">Delete</button>`);
+            }
+
             return `
             <tr>
                 <td>${u.id}</td>
-                <td><button type="button" class="user-link" data-action="view-user" data-id="${u.id}" title="View user statistics">${esc(u.username)}</button></td>
+                <td>${manageable
+                    ? `<button type="button" class="user-link" data-action="view-user" data-id="${u.id}" title="View user statistics">${esc(u.username)}</button>`
+                    : esc(u.username)}</td>
                 <td>${u.uuid ? esc(String(u.uuid).substring(0, 8)) + '…' : '—'}</td>
                 <td><span class="status ${roleClass}">${esc(u.role)}</span></td>
                 <td>${banned
                     ? `<span class="status status-banned" title="${banTitle}">Banned</span>`
                     : '<span class="status status-active">OK</span>'}</td>
                 <td>${u.lastLogin ? fmtDate(u.lastLogin) : 'Never'}</td>
-                <td>
-                    ${banned
-                        ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
-                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`}
-                    <button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>
-                    <button class="btn btn-sm" data-action="change-password" data-id="${u.id}" data-username="${esc(u.username)}">Password</button>
-                    ${String(u.role || '').toLowerCase() === 'admin'
-                        ? ''
-                        : `<button class="btn btn-sm btn-danger" data-action="delete-user" data-id="${u.id}" data-username="${esc(u.username)}">Delete</button>`}
-                </td>
+                <td>${actions.length ? actions.join(' ') : '—'}</td>
             </tr>`;
         }).join('');
     } catch (e) {
@@ -2146,12 +2256,70 @@ async function loadUsers() {
 // ---------- settings ----------
 
 async function loadSettings() {
+    if (!isAdmin) return;
+
     try {
         const data = await api('/admin/status/maintenance');
         document.getElementById('maintenance-toggle').checked = !!data.isMaintenance;
         document.getElementById('maintenance-state').textContent = data.isMaintenance ? 'ON' : 'OFF';
     } catch (e) {
         console.error(e);
+    }
+
+    await loadRolePermissions();
+}
+
+async function loadRolePermissions() {
+    const host = document.getElementById('role-permissions');
+    if (!host) return;
+
+    try {
+        const data = await api('/admin/permissions');
+        const catalog = data.permissions || [];
+        const roles = data.roles || [];
+
+        host.innerHTML = roles.map(role => {
+            const granted = new Set(role.permissions || []);
+            const checks = catalog.map(permission => `
+                <label class="perm-check">
+                    <input type="checkbox" data-perm="${esc(permission.key)}" ${granted.has(permission.key) ? 'checked' : ''}>
+                    <span>
+                        <strong>${esc(permission.label)}</strong>
+                        <small>${esc(permission.description)}</small>
+                    </span>
+                </label>`).join('');
+
+            return `
+                <div class="role-card" data-role="${esc(role.role)}">
+                    <div class="role-card-head">
+                        <h4>${esc(role.label)}</h4>
+                        <span class="status ${roleStatusClass(role.role)}">${esc(role.role)}</span>
+                    </div>
+                    <div class="role-permissions">${checks}</div>
+                    <button class="btn btn-primary" data-action="save-role-permissions" data-role="${esc(role.role)}">Save ${esc(role.label)} access</button>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        console.error(e);
+        host.innerHTML = `<p class="hint">Failed to load role permissions: ${esc(e.message)}</p>`;
+    }
+}
+
+async function saveRolePermissions(role) {
+    const card = document.querySelector(`.role-card[data-role="${CSS.escape(role)}"]`);
+    if (!card) return;
+
+    const permissions = Array.from(card.querySelectorAll('input[data-perm]:checked'))
+        .map(input => input.dataset.perm);
+
+    try {
+        await api(`/admin/permissions/${encodeURIComponent(role)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ permissions })
+        });
+        toast('success', `${role} access saved.`);
+    } catch (e) {
+        toast('error', e.message);
     }
 }
 
@@ -2201,9 +2369,7 @@ document.getElementById('modal').addEventListener('click', (e) => {
 async function viewUser(id) {
     try {
         const s = await api(`/admin/users/${id}/statistics`);
-        const roleClass = String(s.role || '').toLowerCase() === 'admin'
-            ? 'status-role-admin'
-            : 'status-role-user';
+        const roleClass = roleStatusClass(s.role);
         const ipRows = (s.ipHistory || []).map(h => `
             <tr>
                 <td>${esc(h.ip)}</td>
@@ -2292,16 +2458,23 @@ async function unbanUser(id) {
 
 function changeRole(el) {
     const id = el && el.dataset ? el.dataset.id : '';
-    const currentRole = el && el.dataset ? (el.dataset.role || 'user') : 'user';
+    const currentRole = el && el.dataset ? (el.dataset.role || 'user').toLowerCase() : 'user';
     if (!id) return;
+
+    const availableRoles = ['user'];
+    if (isAdmin || myRole === 'moderator') availableRoles.push('moderator');
+    if (isAdmin) availableRoles.push('admin');
+
+    const options = availableRoles.map(role =>
+        `<option value="${esc(role)}" ${currentRole === role ? 'selected' : ''}>${esc(role[0].toUpperCase() + role.slice(1))}</option>`
+    ).join('');
 
     showModal(`
         <h3>Change Role - User ${id}</h3>
         <div class="form-group">
             <label>New Role</label>
             <select id="new-role">
-                <option value="user" ${currentRole === 'user' ? 'selected' : ''}>User</option>
-                <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>Admin</option>
+                ${options}
             </select>
         </div>
         <div class="btn-group">
@@ -2470,7 +2643,13 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             document.getElementById('login-username').value,
             document.getElementById('login-password').value
         );
+        const access = await loadAccess();
+        if (!access.isAdmin && (!access.permissions || access.permissions.length === 0)) {
+            logout();
+            throw new Error('This account has no access to the admin panel.');
+        }
         showScreen('main');
+        selectPage('dashboard');
         loadPage('dashboard');
     } catch (err) {
         errBox.textContent = err.message;
@@ -2537,6 +2716,7 @@ document.addEventListener('click', (event) => {
         case 'confirm-password': confirmPassword(Number(button.dataset.id)); break;
         case 'delete-user': deleteUser(button); break;
         case 'confirm-delete-user': confirmDeleteUser(Number(button.dataset.id)); break;
+        case 'save-role-permissions': saveRolePermissions(button.dataset.role); break;
         case 'close-modal': closeModal(); break;
         case 'view-build': viewBuild(button); break;
         case 'view-logs': viewBuildLogs(button); break;
@@ -2610,8 +2790,23 @@ function showScreen(name) {
 }
 
 if (token) {
-    showScreen('main');
-    loadPage('dashboard');
+    boot();
 } else {
     showScreen('login');
+}
+
+async function boot() {
+    try {
+        const access = await loadAccess();
+        if (!access.isAdmin && (!access.permissions || access.permissions.length === 0)) {
+            logout();
+            return;
+        }
+        showScreen('main');
+        selectPage('dashboard');
+        loadPage('dashboard');
+    } catch (e) {
+        console.error(e);
+        logout();
+    }
 }
