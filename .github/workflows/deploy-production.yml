@@ -45,16 +45,17 @@ jobs:
 
       - name: Validate image tag
         id: image
+        env:
+          RAW_TAG: ${{ inputs.image_tag }}
         run: |
-          tag="${{ inputs.image_tag }}"
+          # Accept either a bare tag (sha-<sha>) or a full image reference.
+          tag="${RAW_TAG##*/}"
+          tag="${tag##*:}"
 
-          case "$tag" in
-            sha-*) ;;
-            *)
-              echo "image_tag must start with sha-"
-              exit 1
-              ;;
-          esac
+          if ! printf '%s' "$tag" | grep -Eq '^sha-[0-9a-f]{40}$'; then
+            echo "image_tag must be sha-<40-char-git-sha>; got: $RAW_TAG"
+            exit 1
+          fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

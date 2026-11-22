@@ -41,20 +41,21 @@ jobs:
 
       - name: Resolve image tag
         id: image
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             tag="sha-${{ github.event.workflow_run.head_sha }}"
           else
-            tag="${{ inputs.image_tag }}"
+            # Accept either a bare tag (sha-<sha>) or a full image reference.
+            tag="${INPUT_TAG##*/}"
+            tag="${tag##*:}"
           fi
 
-          case "$tag" in
-            sha-*) ;;
-            *)
-              echo "image_tag must start with sha-"
-              exit 1
-              ;;
-          esac
+          if ! printf '%s' "$tag" | grep -Eq '^sha-[0-9a-f]{40}$'; then
+            echo "image_tag must be sha-<40-char-git-sha>; got: $tag"
+            exit 1
+          fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
