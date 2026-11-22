@@ -14,6 +14,7 @@ namespace UnderMineApi.Data
         public DbSet<UnderMineApi.Domain.Entities.RolePermission> RolePermissions => Set<UnderMineApi.Domain.Entities.RolePermission>();
         public DbSet<ServerManifest> ServerManifests => Set<ServerManifest>();
         public DbSet<UserBans> UserBans => Set<UserBans>();
+        public DbSet<UserBanEvidence> UserBanEvidence => Set<UserBanEvidence>();
         public DbSet<UserData> UserData => Set<UserData>();
         public DbSet<GlobalSetting> GlobalSettings => Set<GlobalSetting>();
         public DbSet<ServerConfigDetails> ServerConfigs => Set<ServerConfigDetails>();
@@ -95,6 +96,19 @@ namespace UnderMineApi.Data
                       .WithMany()
                       .HasForeignKey(b => b.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasMany(b => b.Evidence)
+                      .WithOne(e => e.Ban)
+                      .HasForeignKey(e => e.BanId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<UserBanEvidence>(entity =>
+            {
+                entity.ToTable("user_ban_evidence");
+                entity.Property(e => e.FileName).HasMaxLength(255);
+                entity.Property(e => e.ContentType).HasMaxLength(100);
+                entity.Property(e => e.Sha256).HasMaxLength(64);
             });
 
             modelBuilder.Entity<GlobalSetting>(entity =>

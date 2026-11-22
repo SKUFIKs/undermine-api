@@ -748,8 +748,151 @@ table.table tr:last-child td {
     z-index: 1;
 }
 
+.ban-datetime-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 10px;
+}
+
+.ban-quick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.evidence-picker {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+}
+
+.evidence-picker li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 9px;
+    background: var(--input);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    font-size: 12px;
+}
+
+.evidence-picker li + li {
+    margin-top: 6px;
+}
+
+.evidence-picker li.invalid {
+    border-color: var(--err);
+    color: var(--err);
+}
+
+.evidence-picker small {
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.ban-history-item {
+    margin-top: 10px;
+    padding: 12px;
+    background: var(--input);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.ban-history-item.is-active {
+    border-color: rgba(224, 82, 82, 0.45);
+}
+
+.ban-history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.ban-history-reason {
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.evidence-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.evidence-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 5px 8px;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text-2);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.evidence-chip:hover {
+    border-color: var(--line-strong);
+    color: var(--text);
+}
+
+.evidence-kind {
+    color: var(--muted);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.evidence-name {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.evidence-chip small {
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+.evidence-preview {
+    margin: 12px 0;
+    padding: 8px;
+    background: var(--input);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    text-align: center;
+}
+
+.evidence-preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 60vh;
+    margin: 0 auto;
+    border-radius: 6px;
+}
+
+.hint.error {
+    color: var(--err);
+}
+
 @media (max-width: 700px) {
     .detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ban-datetime-row {
         grid-template-columns: 1fr;
     }
 }

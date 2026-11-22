@@ -142,6 +142,12 @@ services:
     дата регистрации, последний вход, playtime, убийства/смерти, текущий бан
     и история IP-адресов с датами первого/последнего входа и количеством входов.
   - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя (`users.ban`).
+    Multipart-запрос: `reason` (10–2000 символов), необязательный `expiresAt`
+    (Unix UTC; пусто = навсегда) и 1–5 файлов `evidence` (до 10 МБ каждый,
+    до 40 МБ суммарно; изображения, PDF, текст/логи, JSON/CSV, ZIP, DOC/DOCX,
+    MP4/WebM). Файлы хранятся в PostgreSQL, а не в публичном S3-бакете.
+  - `GET /api/v1.0/admin/ban-evidence/{id}` — скачивание доказательства
+    (`users.ban`). Доступно только через API с авторизацией.
   - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя (`users.ban`).
   - `PATCH /api/v1.0/admin/users/{id}/role` — смена роли на `user`, `moderator`
     или `admin` (`users.change_role`). Назначать `admin` и менять администраторов

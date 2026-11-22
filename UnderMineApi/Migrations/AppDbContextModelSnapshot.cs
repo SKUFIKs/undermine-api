@@ -651,6 +651,57 @@ namespace UnderMineApi.Migrations
                     b.ToTable("server_manifests", (string)null);
                 });
 
+            modelBuilder.Entity("UnderMineApi.Models.UserBanEvidence", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BanId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ban_id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("content_type");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("created_at");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("data");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<long>("Size")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BanId");
+
+                    b.ToTable("user_ban_evidence", (string)null);
+                });
+
             modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
                 {
                     b.Property<long>("Id")
@@ -779,6 +830,17 @@ namespace UnderMineApi.Migrations
                     b.Navigation("Server");
                 });
 
+            modelBuilder.Entity("UnderMineApi.Models.UserBanEvidence", b =>
+                {
+                    b.HasOne("UnderMineApi.Models.UserBans", "Ban")
+                        .WithMany("Evidence")
+                        .HasForeignKey("BanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Ban");
+                });
+
             modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
                 {
                     b.HasOne("UnderMineApi.Domain.Entities.UserAccount", null)
@@ -818,6 +880,11 @@ namespace UnderMineApi.Migrations
             modelBuilder.Entity("UnderMineApi.Models.ServerManifest", b =>
                 {
                     b.Navigation("Config");
+                });
+
+            modelBuilder.Entity("UnderMineApi.Models.UserBans", b =>
+                {
+                    b.Navigation("Evidence");
                 });
 #pragma warning restore 612, 618
         }

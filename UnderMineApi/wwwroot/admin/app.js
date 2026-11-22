@@ -20,6 +20,7 @@ let activityAction = '';
 let activityActor = '';
 let activityDays = 0;
 let activitySearchTimer = null;
+let evidenceObjectUrl = null;
 
 // Effective access of the signed-in account, loaded from /admin/me. The admin role always
 // has every permission; moderator/user permissions are configured in Settings.
@@ -331,6 +332,39 @@ async function api(path, options = {}) {
     }
 
     return body;
+}
+
+// Binary variant of api() for evidence previews/downloads.
+async function apiBlob(path) {
+    let res;
+    try {
+        res = await fetch(`${API_BASE}${path}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+    } catch (e) {
+        throw new Error('Network error: the API is not responding. Check that the server is running.');
+    }
+
+    if (res.status === 401) {
+        logout();
+        throw new Error('Session expired, please sign in again');
+    }
+
+    if (!res.ok) {
+        const text = await res.text();
+        let message = `HTTP ${res.status}`;
+        if (text) {
+            try {
+                const body = JSON.parse(text);
+                message = body.message || body.Message || body.error || body.Error || message;
+            } catch {
+                message = text;
+            }
+        }
+        throw new Error(friendlyError(message));
+    }
+
+    return res.blob();
 }
 
 // ---------- navigation ----------
@@ -2285,7 +2319,7 @@ async function loadUsers() {
                 if (can('users.ban')) {
                     actions.push(banned
                         ? `<button class="btn btn-sm" data-action="unban-user" data-id="${u.id}">Unban</button>`
-                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}">Ban</button>`);
+                        : `<button class="btn btn-sm btn-danger" data-action="ban-user" data-id="${u.id}" data-username="${esc(u.username)}">Ban</button>`);
                 }
                 if (can('users.change_role')) {
                     actions.push(`<button class="btn btn-sm" data-action="change-role" data-id="${u.id}" data-role="${esc(u.role)}">Role</button>`);
@@ -2586,6 +2620,11 @@ function closeModal() {
     editorSelectedPath = null;
     editorFileContent = null;
     editorSearch = '';
+
+    if (evidenceObjectUrl) {
+        URL.revokeObjectURL(evidenceObjectUrl);
+        evidenceObjectUrl = null;
+    }
 }
 
 document.querySelector('.close').addEventListener('click', closeModal);
@@ -2610,6 +2649,38 @@ async function viewUser(id) {
             ? `<p class="hint">Banned: ${esc(s.banReason || 'no reason')} · ${fmtBanExpiry(s.banExpiresAt)} · by ${esc(s.bannedBy || '—')}</p>`
             : '';
 
+        const renderEvidence = (files) => {
+            if (!can('users.ban')) {
+                return '<span class="muted">Evidence is available to staff with ban permission.</span>';
+            }
+            if (!files || !files.length) {
+                return '<span class="muted">No evidence attached (legacy ban).</span>';
+            }
+            return files.map(file => `
+                <button type="button"
+                        class="evidence-chip ${file.isImage ? 'is-image' : ''}"
+                        data-action="${file.isImage ? 'view-evidence' : 'download-evidence'}"
+                        data-id="${file.id}"
+                        data-name="${esc(file.fileName)}"
+                        data-type="${esc(file.contentType)}"
+                        title="${esc(file.fileName)} · ${fmtBytes(file.size)}">
+                    <span class="evidence-kind">${file.isImage ? 'Image' : 'File'}</span>
+                    <span class="evidence-name">${esc(file.fileName)}</span>
+                    <small>${fmtBytes(file.size)}</small>
+                </button>`).join('');
+        };
+
+        const banHistory = (s.bans || []).map(entry => `
+            <div class="ban-history-item ${entry.isActive ? 'is-active' : ''}">
+                <div class="ban-history-head">
+                    <span class="status ${entry.isActive ? 'status-banned' : 'status-inactive'}">${entry.isActive ? 'Active' : 'Ended'}</span>
+                    <span class="muted">${fmtDate(entry.createdAt)}</span>
+                </div>
+                <p class="ban-history-reason">${esc(entry.reason)}</p>
+                <p class="muted">By ${esc(entry.bannedBy || '—')} · ${entry.expiresAt ? 'until ' + fmtDate(entry.expiresAt) : 'permanent'}</p>
+                <div class="evidence-list">${renderEvidence(entry.evidence)}</div>
+            </div>`).join('');
+
         showModal(`
             <h3>${esc(s.username)} <span class="status ${roleClass}">${esc(s.role)}</span></h3>
             <p class="muted">ID ${s.id} · UUID ${esc(s.uuid || '—')}</p>
@@ -2631,6 +2702,8 @@ async function viewUser(id) {
                        <tbody>${ipRows}</tbody>
                    </table></div>`
                 : '<p class="muted">No login IPs recorded yet.</p>'}
+            <h4>Ban history</h4>
+            ${banHistory || '<p class="muted">No bans recorded.</p>'}
             <div class="btn-group">
                 <button class="btn" data-action="close-modal">Close</button>
             </div>
@@ -2640,35 +2713,254 @@ async function viewUser(id) {
     }
 }
 
-function banUser(id) {
+function toDateInputValue(date) {
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function toTimeInputValue(date) {
+    const pad = value => String(value).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function banExpiryDate() {
+    const date = val('ban-date');
+    const time = val('ban-time');
+    if (!date || !time) return null;
+    const parsed = new Date(`${date}T${time}:00`);
+    return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function fmtRemaining(ms) {
+    const totalMinutes = Math.max(0, Math.ceil(ms / 60000));
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+function setBanExpiryFromNow(hours) {
+    const date = new Date(Date.now() + Math.max(1, hours) * 3600 * 1000);
+    const dateInput = document.getElementById('ban-date');
+    const timeInput = document.getElementById('ban-time');
+    if (dateInput) dateInput.value = toDateInputValue(date);
+    if (timeInput) timeInput.value = toTimeInputValue(date);
+    syncBanForm();
+}
+
+function syncBanForm() {
+    const reason = val('ban-reason');
+    const mode = val('ban-mode') || 'temporary';
+    const permanent = mode === 'permanent';
+    const expiry = banExpiryDate();
+    const fileInput = document.getElementById('ban-evidence');
+    const files = Array.from(fileInput?.files || []);
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+
+    const validExpiry = permanent || (expiry !== null && expiry.getTime() > Date.now());
+    const validFiles =
+        files.length >= 1 &&
+        files.length <= 5 &&
+        totalBytes <= 40 * 1024 * 1024 &&
+        files.every(file => file.size > 0 && file.size <= 10 * 1024 * 1024);
+    const validReason = reason.length >= 10 && reason.length <= 2000;
+
+    const button = document.querySelector('#modal-body [data-action="confirm-ban"]');
+    if (button) button.disabled = !(validExpiry && validFiles && validReason);
+
+    const fields = document.getElementById('ban-expiry-fields');
+    if (fields) fields.style.display = permanent ? 'none' : '';
+
+    const preview = document.getElementById('ban-expiry-preview');
+    if (preview) {
+        if (permanent) {
+            preview.textContent = 'The account stays blocked until an administrator lifts the ban.';
+        } else if (!expiry) {
+            preview.textContent = 'Choose a ban end date and time.';
+        } else if (expiry.getTime() <= Date.now()) {
+            preview.textContent = 'The end date and time must be in the future.';
+        } else {
+            preview.textContent = `Until ${expiry.toLocaleString()} · in ${fmtRemaining(expiry.getTime() - Date.now())}`;
+        }
+    }
+
+    const hint = document.getElementById('ban-reason-hint');
+    if (hint) {
+        hint.textContent = `${reason.length} / 2000 · minimum 10 characters`;
+        hint.classList.toggle('error', reason.length > 0 && reason.length < 10);
+    }
+
+    const list = document.getElementById('ban-evidence-list');
+    if (list) {
+        list.innerHTML = files.map(file => {
+            const tooLarge = file.size > 10 * 1024 * 1024;
+            return `<li class="${tooLarge ? 'invalid' : ''}">
+                        <span>${esc(file.name)}</span>
+                        <small>${fmtBytes(file.size)}${tooLarge ? ' · over 10 MB' : ''}</small>
+                    </li>`;
+        }).join('');
+    }
+}
+
+function banUser(el) {
+    const id = el && el.dataset ? el.dataset.id : '';
+    const username = el && el.dataset ? (el.dataset.username || '') : '';
+    if (!id) return;
+
     showModal(`
-        <h3>Ban User ${id}</h3>
+        <h3>Ban ${esc(username || 'user #' + id)}</h3>
+        <p class="hint">A written reason and at least one evidence file are required.</p>
+
         <div class="form-group">
-            <label>Reason</label>
-            <input type="text" id="ban-reason" placeholder="Reason for ban">
+            <label>Ban type</label>
+            <select id="ban-mode">
+                <option value="temporary">Temporary</option>
+                <option value="permanent">Permanent</option>
+            </select>
         </div>
+
+        <div id="ban-expiry-fields">
+            <div class="form-group">
+                <label>Ban until (date and time)</label>
+                <div class="ban-datetime-row">
+                    <input type="date" id="ban-date">
+                    <input type="time" id="ban-time" step="60">
+                </div>
+                <div class="ban-quick">
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="1">+1 hour</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="24">+24 hours</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="168">+7 days</button>
+                    <button type="button" class="btn btn-sm" data-action="ban-quick" data-hours="720">+30 days</button>
+                </div>
+                <p class="hint" id="ban-expiry-preview"></p>
+            </div>
+        </div>
+
         <div class="form-group">
-            <label>Duration (days, empty = permanent)</label>
-            <input type="number" id="ban-duration" placeholder="Permanent">
+            <label>Reason for the ban</label>
+            <textarea id="ban-reason" rows="4" maxlength="2000" placeholder="Describe what happened and why this account is being blocked..."></textarea>
+            <p class="hint" id="ban-reason-hint">0 / 2000 · minimum 10 characters</p>
         </div>
+
+        <div class="form-group">
+            <label>Evidence (required)</label>
+            <input type="file" id="ban-evidence" multiple
+                   accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.pdf,.txt,.log,.json,.csv,.zip,.doc,.docx,.mp4,.webm">
+            <p class="hint">Screenshots, chat logs, documents or video. Up to 5 files, 10 MB each, 40 MB total.</p>
+            <ul id="ban-evidence-list" class="evidence-picker"></ul>
+        </div>
+
         <div class="btn-group">
-            <button class="btn btn-danger" data-action="confirm-ban" data-id="${id}">Ban</button>
+            <button class="btn btn-danger" data-action="confirm-ban" data-id="${id}" disabled>Apply ban</button>
             <button class="btn" data-action="close-modal">Cancel</button>
         </div>
     `);
+
+    const mode = document.getElementById('ban-mode');
+    const reason = document.getElementById('ban-reason');
+    const date = document.getElementById('ban-date');
+    const time = document.getElementById('ban-time');
+    const evidence = document.getElementById('ban-evidence');
+
+    mode?.addEventListener('change', syncBanForm);
+    reason?.addEventListener('input', syncBanForm);
+    date?.addEventListener('input', syncBanForm);
+    time?.addEventListener('input', syncBanForm);
+    evidence?.addEventListener('change', syncBanForm);
+
+    setBanExpiryFromNow(24);
 }
 
 async function confirmBan(id) {
+    const button = document.querySelector('#modal-body [data-action="confirm-ban"]');
+    const reason = val('ban-reason');
+    const permanent = val('ban-mode') === 'permanent';
+    const expiry = permanent ? null : banExpiryDate();
+    const files = Array.from(document.getElementById('ban-evidence')?.files || []);
+
+    if (reason.length < 10) {
+        toast('error', 'Describe the reason in at least 10 characters.');
+        return;
+    }
+    if (!permanent && (!expiry || expiry.getTime() <= Date.now())) {
+        toast('error', 'Choose a ban end date and time in the future.');
+        return;
+    }
+    if (!files.length) {
+        toast('error', 'Attach at least one evidence file.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('reason', reason);
+    if (expiry) formData.append('expiresAt', String(Math.floor(expiry.getTime() / 1000)));
+    files.forEach(file => formData.append('evidence', file, file.name));
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Applying ban…';
+    }
+
     try {
-        const days = val('ban-duration');
-        const data = {
-            reason: val('ban-reason') || null,
-            durationDays: days ? parseInt(days, 10) : null
-        };
-        await api(`/admin/users/${id}/ban`, { method: 'POST', body: JSON.stringify(data) });
+        await api(`/admin/users/${id}/ban`, { method: 'POST', body: formData });
         closeModal();
         toast('success', 'User banned.');
         await loadUsers();
+    } catch (e) {
+        toast('error', e.message);
+        if (button) {
+            button.textContent = 'Apply ban';
+            syncBanForm();
+        }
+    }
+}
+
+async function viewEvidence(el) {
+    const id = el?.dataset?.id;
+    const name = el?.dataset?.name || 'Evidence';
+    const type = el?.dataset?.type || '';
+    if (!id) return;
+
+    if (!type.startsWith('image/')) {
+        await downloadEvidence(el);
+        return;
+    }
+
+    try {
+        const blob = await apiBlob(`/admin/ban-evidence/${id}`);
+        if (evidenceObjectUrl) URL.revokeObjectURL(evidenceObjectUrl);
+        evidenceObjectUrl = URL.createObjectURL(blob);
+
+        showModal(`
+            <h3>${esc(name)}</h3>
+            <div class="evidence-preview"><img src="${evidenceObjectUrl}" alt="${esc(name)}"></div>
+            <div class="btn-group">
+                <a class="btn" href="${evidenceObjectUrl}" download="${esc(name)}">Download</a>
+                <button class="btn" data-action="close-modal">Close</button>
+            </div>
+        `);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function downloadEvidence(el) {
+    const id = el?.dataset?.id;
+    const name = el?.dataset?.name || 'evidence';
+    if (!id) return;
+
+    try {
+        const blob = await apiBlob(`/admin/ban-evidence/${id}`);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
         toast('error', e.message);
     }
@@ -2939,8 +3231,11 @@ document.addEventListener('click', (event) => {
         case 'editor-download-manifest': downloadEditorManifest(); break;
         case 'unban-user': unbanUser(Number(button.dataset.id)); break;
         case 'view-user': viewUser(Number(button.dataset.id)); break;
-        case 'ban-user': banUser(Number(button.dataset.id)); break;
+        case 'ban-user': banUser(button); break;
+        case 'ban-quick': setBanExpiryFromNow(Number(button.dataset.hours) || 24); break;
         case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
+        case 'view-evidence': viewEvidence(button); break;
+        case 'download-evidence': downloadEvidence(button); break;
         case 'confirm-role': confirmRole(Number(button.dataset.id)); break;
         case 'confirm-password': confirmPassword(Number(button.dataset.id)); break;
         case 'delete-user': deleteUser(button); break;

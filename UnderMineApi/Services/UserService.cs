@@ -399,15 +399,36 @@ namespace UnderMineApi.Services
             if (user == null) return null;
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var ban = await _context.UserBans
-                .AsNoTracking()
-                .Where(b => b.UserId == id &&
-                            b.IsActive &&
-                            (b.ExpiresAt == null || b.ExpiresAt > now))
-                .OrderByDescending(b => b.CreatedAt)
-                .Select(b => new { b.Reason, b.ExpiresAt, b.BannedBy })
-                .FirstOrDefaultAsync(cancellationToken);
 
+            user.Bans = await _context.UserBans
+                .AsNoTracking()
+                .Where(b => b.UserId == id)
+                .OrderByDescending(b => b.CreatedAt)
+                .ThenByDescending(b => b.Id)
+                .Take(50)
+                .Select(b => new AdminUserBanDto
+                {
+                    Id = b.Id,
+                    Reason = b.Reason,
+                    BannedBy = b.BannedBy,
+                    CreatedAt = b.CreatedAt,
+                    ExpiresAt = b.ExpiresAt,
+                    IsActive = b.IsActive && (b.ExpiresAt == null || b.ExpiresAt > now),
+                    Evidence = b.Evidence
+                        .OrderBy(e => e.Id)
+                        .Select(e => new AdminBanEvidenceDto
+                        {
+                            Id = e.Id,
+                            FileName = e.FileName,
+                            ContentType = e.ContentType,
+                            Size = e.Size,
+                            CreatedAt = e.CreatedAt
+                        })
+                        .ToList()
+                })
+                .ToListAsync(cancellationToken);
+
+            var ban = user.Bans.FirstOrDefault(b => b.IsActive);
             if (ban != null)
             {
                 user.IsBanned = true;
@@ -434,10 +455,38 @@ namespace UnderMineApi.Services
             return user;
         }
 
-        public async Task<(bool Success, string? Error)> BanUserAsync(long id, BanRequestDto request, string actor, CancellationToken cancellationToken = default)
+        public async Task<(bool Success, string? Error)> BanUserAsync(
+            long id,
+            BanRequestDto request,
+            IReadOnlyList<UploadedBanEvidence> evidence,
+            string actor,
+            CancellationToken cancellationToken = default)
         {
+            var cleanReason = LogSanitizer.Clean(request.Reason ?? string.Empty).Trim();
+            if (cleanReason.Length < 10)
+                return (false, "INVALID_REASON");
+            if (cleanReason.Length > 2000)
+                return (false, "INVALID_REASON");
+
+            var now = DateTimeOffset.UtcNow;
+            var nowUnix = now.ToUnixTimeSeconds();
+
+            if (request.ExpiresAt.HasValue)
+            {
+                if (request.ExpiresAt.Value <= nowUnix ||
+                    request.ExpiresAt.Value > now.AddYears(100).ToUnixTimeSeconds())
+                {
+                    return (false, "INVALID_EXPIRY");
+                }
+            }
+
+            if (evidence == null || evidence.Count == 0)
+                return (false, "EVIDENCE_REQUIRED");
+
             var exists = await _context.McAuthAccounts.AsNoTracking().AnyAsync(u => u.Id == id, cancellationToken);
             if (!exists) return (false, "USER_NOT_FOUND");
+
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
             var oldBans = await _context.UserBans.Where(b => b.UserId == id && b.IsActive).ToListAsync(cancellationToken);
             foreach (var b in oldBans) b.IsActive = false;
@@ -445,9 +494,9 @@ namespace UnderMineApi.Services
             var ban = new UserBans
             {
                 UserId = id,
-                Reason = request.Reason ?? "No reason provided",
-                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                ExpiresAt = request.DurationDays.HasValue ? DateTimeOffset.UtcNow.AddDays(request.DurationDays.Value).ToUnixTimeSeconds() : null,
+                Reason = cleanReason,
+                CreatedAt = nowUnix,
+                ExpiresAt = request.ExpiresAt,
                 IsActive = true,
                 BannedBy = actor
             };
@@ -455,10 +504,35 @@ namespace UnderMineApi.Services
             _context.UserBans.Add(ban);
             await _context.SaveChangesAsync(cancellationToken);
 
+            _context.UserBanEvidence.AddRange(evidence.Select(file => new UserBanEvidence
+            {
+                BanId = ban.Id,
+                FileName = file.FileName,
+                ContentType = file.ContentType,
+                Size = file.Size,
+                Sha256 = file.Sha256,
+                Data = file.Data,
+                CreatedAt = nowUnix
+            }));
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
             _access.Invalidate(id);
 
-            _logger.LogInformation("User {UserId} banned by {Actor}", id, actor);
-            await _audit.LogAsync(actor, "ban_user", "user", id, request.Reason, cancellationToken);
+            var expiryText = request.ExpiresAt.HasValue
+                ? DateTimeOffset.FromUnixTimeSeconds(request.ExpiresAt.Value).ToString("u")
+                : "permanent";
+
+            _logger.LogInformation(
+                "User {UserId} banned by {Actor} until {Expiry} with {EvidenceCount} evidence file(s)",
+                id, actor, expiryText, evidence.Count);
+
+            await _audit.LogAsync(
+                actor, "ban_user", "user", id,
+                $"{cleanReason} | expires: {expiryText} | evidence: {evidence.Count}",
+                cancellationToken);
+
             return (true, null);
         }
 

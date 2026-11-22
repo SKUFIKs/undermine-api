@@ -4,8 +4,11 @@ namespace UnderMineApi.DTOs
 {
     public class BanRequestDto
     {
-        public string? Reason { get; set; }
-        public int? DurationDays { get; set; } // Если null, то бан навсегда
+        /// <summary>Written explanation of why the account is being blocked (required).</summary>
+        public string Reason { get; set; } = string.Empty;
+
+        /// <summary>Unix timestamp (UTC) when the ban ends; null means permanent.</summary>
+        public long? ExpiresAt { get; set; }
     }
 
     // Для метода смены пароля
@@ -111,6 +114,34 @@ namespace UnderMineApi.DTOs
         public string? BannedBy { get; set; }
 
         public List<AdminUserIpDto> IpHistory { get; set; } = new();
+
+        /// <summary>Ban history, newest first, with evidence metadata (no binary payload).</summary>
+        public List<AdminUserBanDto> Bans { get; set; } = new();
+    }
+
+    /// <summary>Evidence attachment metadata shown in the ban history dialog.</summary>
+    public class AdminBanEvidenceDto
+    {
+        public long Id { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string ContentType { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public long CreatedAt { get; set; }
+
+        public bool IsImage =>
+            ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>One ban entry with the reason, dates and attached evidence files.</summary>
+    public class AdminUserBanDto
+    {
+        public long Id { get; set; }
+        public string Reason { get; set; } = string.Empty;
+        public string BannedBy { get; set; } = string.Empty;
+        public long CreatedAt { get; set; }
+        public long? ExpiresAt { get; set; }
+        public bool IsActive { get; set; }
+        public List<AdminBanEvidenceDto> Evidence { get; set; } = new();
     }
 
     /// <summary>

@@ -268,6 +268,7 @@ try
     // Build services
     builder.Services.AddScoped<EngineDownloadService>();
     builder.Services.AddScoped<S3StorageService>();
+    builder.Services.AddScoped<BanEvidenceService>();
     builder.Services.AddScoped<BuildManifestService>();
     builder.Services.AddScoped<BuildEditorService>();
     builder.Services.AddHttpClient<ModrinthService>();

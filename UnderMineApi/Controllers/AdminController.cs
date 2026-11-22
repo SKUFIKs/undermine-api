@@ -29,13 +29,15 @@ namespace UnderMineApi.Controllers
         private readonly IUserService _userService;
         private readonly IServerService _serverService;
         private readonly AdminAuditService _audit;
+        private readonly BanEvidenceService _banEvidence;
 
         public AdminController(ILogger<AdminController> logger,
                                ConfigCacheService cache,
                                AppDbContext context,
                                IUserService userService,
                                IServerService serverService,
-                               AdminAuditService audit)
+                               AdminAuditService audit,
+                               BanEvidenceService banEvidence)
         {
             _logger = logger;
             _cache = cache;
@@ -43,6 +45,7 @@ namespace UnderMineApi.Controllers
             _userService = userService;
             _serverService = serverService;
             _audit = audit;
+            _banEvidence = banEvidence;
         }
 
         private string GetActor() => LogSanitizer.Clean(User?.Identity?.Name ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "system");
@@ -136,23 +139,133 @@ namespace UnderMineApi.Controllers
 
         [HttpPost("users/{id}/ban")]
         [Authorize(Policy = Permissions.UsersBan)]
-        public async Task<IActionResult> BanUser(long id, [FromBody] BanRequestDto request, CancellationToken cancellationToken = default)
+        [RequestSizeLimit(50 * 1024 * 1024)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50 * 1024 * 1024)]
+        public async Task<IActionResult> BanUser(
+            long id,
+            [FromForm] BanRequestDto request,
+            [FromForm] List<IFormFile>? evidence,
+            CancellationToken cancellationToken = default)
         {
             var targetRole = await GetTargetRoleAsync(id, cancellationToken);
             if (targetRole != null && !CanManageTarget(targetRole))
                 return HigherRoleForbidden();
 
+            var reason = (request.Reason ?? string.Empty).Trim();
+            if (reason.Length < 10 || reason.Length > 2000)
+            {
+                return BadRequest(new
+                {
+                    Error = "INVALID_REASON",
+                    Message = "Describe the reason in 10–2000 characters."
+                });
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            if (request.ExpiresAt.HasValue &&
+                (request.ExpiresAt.Value <= now.ToUnixTimeSeconds() ||
+                 request.ExpiresAt.Value > now.AddYears(100).ToUnixTimeSeconds()))
+            {
+                return BadRequest(new
+                {
+                    Error = "INVALID_EXPIRY",
+                    Message = "Choose a ban end date and time in the future."
+                });
+            }
+
+            IReadOnlyList<UploadedBanEvidence> uploadedEvidence;
+            try
+            {
+                uploadedEvidence = await _banEvidence.ReadAsync(evidence, cancellationToken);
+            }
+            catch (BanEvidenceException ex)
+            {
+                return BadRequest(new { Error = ex.Code, Message = ex.Message });
+            }
+
             var requestId = HttpContext.Items.ContainsKey("RequestId") ? HttpContext.Items["RequestId"]?.ToString() : null;
             using (_logger.BeginScope(new Dictionary<string, object?> { ["RequestId"] = requestId }))
             {
                 var actor = GetActor();
-                _logger.LogInformation("Admin {Actor} banning user {UserId}. Reason: {Reason}, Duration: {Duration} days",
-                    actor, LogSanitizer.Clean(id), LogSanitizer.Clean(request.Reason), LogSanitizer.Clean(request.DurationDays));
-                var result = await _userService.BanUserAsync(id, request, actor, cancellationToken);
-                if (!result.Success) return result.ToActionResult();
+                var expiryText = request.ExpiresAt.HasValue
+                    ? DateTimeOffset.FromUnixTimeSeconds(request.ExpiresAt.Value).ToString("u")
+                    : "permanent";
+
+                _logger.LogInformation(
+                    "Admin {Actor} banning user {UserId} until {Expiry} with {EvidenceCount} evidence file(s). Reason: {Reason}",
+                    actor, id, expiryText, uploadedEvidence.Count, LogSanitizer.Clean(reason));
+
+                var result = await _userService.BanUserAsync(
+                    id, request, uploadedEvidence, actor, cancellationToken);
+
+                if (!result.Success)
+                {
+                    _logger.LogWarning("Admin {Actor} failed to ban user {UserId}: {Error}", actor, id, result.Error);
+
+                    return result.Error switch
+                    {
+                        "USER_NOT_FOUND" => NotFound(new
+                        {
+                            Error = result.Error,
+                            Message = "User not found."
+                        }),
+                        "INVALID_REASON" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "Describe the reason in 10–2000 characters."
+                        }),
+                        "INVALID_EXPIRY" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "Choose a ban end date and time in the future."
+                        }),
+                        "EVIDENCE_REQUIRED" => BadRequest(new
+                        {
+                            Error = result.Error,
+                            Message = "Attach at least one evidence file."
+                        }),
+                        _ => StatusCode(500, new
+                        {
+                            Error = "INTERNAL_ERROR",
+                            Message = "An internal server error occurred."
+                        })
+                    };
+                }
+
                 _logger.LogInformation("Admin {Actor} successfully banned user {UserId}", actor, id);
                 return Ok(new { Message = "User has been banned" });
             }
+        }
+
+        /// <summary>
+        /// Downloads one evidence file attached to a ban. Files live in PostgreSQL and are
+        /// reachable only through this authenticated endpoint, never through the public CDN.
+        /// </summary>
+        [HttpGet("ban-evidence/{evidenceId:long}")]
+        [Authorize(Policy = Permissions.UsersBan)]
+        public async Task<IActionResult> GetBanEvidence(long evidenceId, CancellationToken cancellationToken = default)
+        {
+            var evidence = await _context.UserBanEvidence
+                .AsNoTracking()
+                .Where(e => e.Id == evidenceId)
+                .Select(e => new
+                {
+                    e.FileName,
+                    e.ContentType,
+                    e.Data,
+                    UserId = e.Ban != null ? e.Ban.UserId : 0
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (evidence == null || evidence.UserId == 0)
+                return NotFound(new { Error = "EVIDENCE_NOT_FOUND", Message = "Evidence file not found." });
+
+            var targetRole = await GetTargetRoleAsync(evidence.UserId, cancellationToken);
+            if (targetRole != null && !CanManageTarget(targetRole))
+                return HigherRoleForbidden();
+
+            Response.Headers["Cache-Control"] = "no-store";
+            return File(evidence.Data, evidence.ContentType, evidence.FileName);
         }
 
         [HttpPost("users/{id}/unban")]
