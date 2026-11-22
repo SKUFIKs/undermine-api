@@ -7,12 +7,13 @@ using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers;
 
 [ApiController]
 [Route("api/v1.0/admin")]
-[Authorize(Roles = "admin")]
+[Authorize(Policy = Permissions.PresetsCreate)]
 [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminModsController : ControllerBase
 {

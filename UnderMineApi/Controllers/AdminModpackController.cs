@@ -13,6 +13,7 @@ using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Models;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers;
 
@@ -30,7 +31,7 @@ namespace UnderMineApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1.0/admin/builds/import-modpack")]
-[Authorize(Roles = "admin")]
+[Authorize(Policy = Permissions.BuildsUpload)]
 [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
 public class AdminModpackController : ControllerBase
 {

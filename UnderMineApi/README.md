@@ -124,23 +124,40 @@ services:
   - `GET /api/v1.0/servers` — список серверов (кешируется ConfigCacheService).
   - `GET /api/v1.0/servers/{id}` — детали сервера.
 
-- Admin (требуется роль `Admin` в JWT claims)
-  - `GET /api/v1.0/admin/users` — список пользователей (пагинация).
+- Admin (роли `admin` и `moderator`, доступ по правам)
+  - `GET /api/v1.0/admin/me` — роль и эффективные права текущей учётной записи
+    (используется админ-панелью для скрытия недоступных разделов и действий).
+  - `GET /api/v1.0/admin/permissions` — список прав и текущие наборы для ролей
+    `moderator` и `user` (только администратор).
+  - `PUT /api/v1.0/admin/permissions/{role}` — заменить набор прав роли
+    `moderator` или `user` телом `{ "permissions": ["servers.view", ...] }`
+    (только администратор). Роль `admin` всегда имеет все права.
+  - `GET /api/v1.0/admin/users` — список пользователей (пагинация; право
+    `users.ban`, `users.change_password` или `users.change_role`).
   - `GET /api/v1.0/admin/users/{id}/statistics` — персональная статистика:
     дата регистрации, последний вход, playtime, убийства/смерти, текущий бан
     и история IP-адресов с датами первого/последнего входа и количеством входов.
-  - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя.
-  - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя.
+  - `POST /api/v1.0/admin/users/{id}/ban` — блокировка пользователя (`users.ban`).
+  - `POST /api/v1.0/admin/users/{id}/unban` — разблокировка пользователя (`users.ban`).
+  - `PATCH /api/v1.0/admin/users/{id}/role` — смена роли на `user`, `moderator`
+    или `admin` (`users.change_role`). Назначать `admin` и менять администраторов
+    может только администратор.
   - `POST /api/v1.0/admin/users/{id}/delete` — безвозвратное удаление аккаунта:
     требует `confirmUsername` (повторить username) и `reason` (5–500 символов).
     Нельзя удалить себя или администратора; сначала нужно снять роль admin.
     Удаляются статистика и история банов, старые JWT перестают работать,
-    действие пишется в `admin_audits` в той же транзакции.
-  - `PATCH /api/v1.0/admin/users/{id}/change-password` — смена пароля пользователем.
-  - `POST /api/v1.0/admin/servers` — создание сервера (обновляет кеш и рассылает в Redis для синхронизации).
-  - `PUT /api/v1.0/admin/servers/{id}` — обновление сервера.
-  - `DELETE /api/v1.0/admin/servers/{id}` — удаление сервера.
-  - `POST /api/v1.0/admin/status/maintenance?enabled=true|false` — включение/выключение maintenance mode (сохраняется в `GlobalSettings`).
+    действие пишется в `admin_audits` в той же транзакции. Только администратор.
+  - `PATCH /api/v1.0/admin/users/{id}/change-password` — смена пароля пользователем
+    (`users.change_password`). Пароль администратора может менять только администратор.
+  - `POST /api/v1.0/admin/servers` — создание сервера (`servers.create`; обновляет кеш и рассылает в Redis для синхронизации).
+  - `PUT /api/v1.0/admin/servers/{id}` — обновление сервера (`servers.edit`).
+  - `DELETE /api/v1.0/admin/servers/{id}` — удаление сервера (`servers.edit`).
+  - `POST /api/v1.0/admin/status/maintenance?enabled=true|false` — включение/выключение maintenance mode (только администратор; сохраняется в `GlobalSettings`).
+
+  Права: `servers.view`, `servers.create`, `servers.edit`, `builds.upload`,
+  `presets.create`, `users.ban`, `users.change_password`, `users.change_role`.
+  Роль `admin` имеет все права неявно; для `moderator` при миграции заводятся
+  права по умолчанию (всё, кроме смены паролей и ролей).
 
 ## Примеры curl
 

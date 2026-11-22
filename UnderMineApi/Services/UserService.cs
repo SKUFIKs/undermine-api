@@ -155,8 +155,8 @@ namespace UnderMineApi.Services
             var user = await _context.McAuthAccounts.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
             if (user == null) return (false, "USER_NOT_FOUND");
 
-            var allowedRoles = new[] { "admin", "user" };
-            var normalizedRole = newRole.Trim().ToLower();
+            var allowedRoles = Roles.Assignable;
+            var normalizedRole = newRole.Trim().ToLowerInvariant();
 
             if (!allowedRoles.Contains(normalizedRole))
                 return (false, "INVALID_ROLE");
@@ -165,11 +165,11 @@ namespace UnderMineApi.Services
 
             // Demoting the last administrator would leave the installation without an admin.
             // Deleting an admin is blocked entirely; the admin must be demoted first.
-            if (string.Equals(oldRole, "admin", StringComparison.OrdinalIgnoreCase) &&
-                normalizedRole != "admin")
+            if (string.Equals(oldRole, Roles.Admin, StringComparison.OrdinalIgnoreCase) &&
+                normalizedRole != Roles.Admin)
             {
                 var otherAdmins = await _context.McAuthAccounts
-                    .CountAsync(u => u.Id != id && u.Role.ToLower() == "admin", cancellationToken);
+                    .CountAsync(u => u.Id != id && u.Role.ToLower() == Roles.Admin, cancellationToken);
                 if (otherAdmins == 0)
                     return (false, "LAST_ADMIN");
             }
@@ -218,7 +218,7 @@ namespace UnderMineApi.Services
 
             // An admin must be demoted first. This also prevents deleting the last admin:
             // ChangeUserRoleAsync refuses to demote the last admin.
-            if (string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(user.Role, Roles.Admin, StringComparison.OrdinalIgnoreCase))
                 return (false, "CANNOT_DELETE_ADMIN");
 
             var cleanReason = LogSanitizer.Clean(reason ?? string.Empty).Trim();

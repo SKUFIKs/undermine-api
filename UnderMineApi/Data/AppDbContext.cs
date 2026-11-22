@@ -1,6 +1,7 @@
 ﻿using UnderMineApi.Models;
 using Microsoft.EntityFrameworkCore;
 using UnderMineApi.Domain.Entities;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Data
 {
@@ -10,6 +11,7 @@ namespace UnderMineApi.Data
 
         public DbSet<UnderMineApi.Domain.Entities.UserAccount> McAuthAccounts { get; set; }
         public DbSet<UnderMineApi.Domain.Entities.UserIpHistory> UserIpHistory => Set<UnderMineApi.Domain.Entities.UserIpHistory>();
+        public DbSet<UnderMineApi.Domain.Entities.RolePermission> RolePermissions => Set<UnderMineApi.Domain.Entities.RolePermission>();
         public DbSet<ServerManifest> ServerManifests => Set<ServerManifest>();
         public DbSet<UserBans> UserBans => Set<UserBans>();
         public DbSet<UserData> UserData => Set<UserData>();
@@ -56,6 +58,22 @@ namespace UnderMineApi.Data
                       .WithMany()
                       .HasForeignKey(h => h.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<RolePermission>(entity =>
+            {
+                entity.ToTable("role_permissions");
+                entity.HasKey(e => new { e.Role, e.Permission });
+                entity.Property(e => e.Role).HasMaxLength(50);
+                entity.Property(e => e.Permission).HasMaxLength(100);
+
+                entity.HasData(Permissions.ModeratorDefaults
+                    .Select(permission => new RolePermission
+                    {
+                        Role = Roles.Moderator,
+                        Permission = permission
+                    })
+                    .ToArray());
             });
 
             modelBuilder.Entity<ServerManifest>(entity =>

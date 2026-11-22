@@ -51,6 +51,13 @@ namespace UnderMineApi.DTOs
         public string Role { get; set; } = string.Empty;
     }
 
+    /// <summary>Replaces the permission set of one configurable role.</summary>
+    public class RolePermissionsUpdateDto
+    {
+        [Required]
+        public List<string> Permissions { get; set; } = new();
+    }
+
     /// <summary>
     /// Confirmation payload for irreversible account deletion. The caller must retype the
     /// target username and provide a reason; both are checked server-side and audited.

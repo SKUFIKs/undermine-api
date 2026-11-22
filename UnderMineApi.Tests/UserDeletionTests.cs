@@ -170,6 +170,18 @@ public class UserDeletionTests : IDisposable
         Assert.Equal("user", stored!.Role);
     }
 
+    [Fact]
+    public async Task AllowsAssigningTheModeratorRole()
+    {
+        var (user, _) = await SeedAsync();
+
+        var result = await _service.ChangeUserRoleAsync(user.Id, "moderator", "root");
+
+        Assert.True(result.Success, result.Error);
+        var stored = await _context.McAuthAccounts.FindAsync(user.Id);
+        Assert.Equal("moderator", stored!.Role);
+    }
+
     private async Task<(UserAccount User, UserAccount Admin)> SeedAsync()
     {
         var user = NewUser("target", "user");

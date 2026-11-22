@@ -339,6 +339,55 @@ namespace UnderMineApi.Migrations
                     b.ToTable("build_preset_mods", (string)null);
                 });
 
+            modelBuilder.Entity("UnderMineApi.Domain.Entities.RolePermission", b =>
+                {
+                    b.Property<string>("Role")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Permission")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("permission");
+
+                    b.HasKey("Role", "Permission");
+
+                    b.ToTable("role_permissions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.view"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.create"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "servers.edit"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "builds.upload"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "presets.create"
+                        },
+                        new
+                        {
+                            Role = "moderator",
+                            Permission = "users.ban"
+                        });
+                });
+
             modelBuilder.Entity("UnderMineApi.Domain.Entities.UserAccount", b =>
                 {
                     b.Property<long>("Id")

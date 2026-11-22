@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Services;
+using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers
 {
@@ -16,7 +17,7 @@ namespace UnderMineApi.Controllers
     /// </summary>
     [ApiController]
     [Route("api/v1.0/versions")]
-    [Authorize(Roles = "admin")]
+    [Authorize(Policy = Permissions.AdminAreaPolicy)]
     [EnableRateLimiting(RateLimitingExtensions.AdminPolicy)]
     public class VersionsController : ControllerBase
     {
