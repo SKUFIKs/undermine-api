@@ -134,6 +134,14 @@
   when: inventory_hostname not in groups['prod_standby']
   notify: Restart nginx
 
+- name: Route unknown/unparsed SNI to the local TLS vhosts
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*default\s+127\.0\.0\.1:10444;'
+    line: '        default                 127.0.0.1:8443;'
+    backup: true
+  notify: Restart nginx
+
 - name: Validate Nginx configuration
   ansible.builtin.command:
     cmd: nginx -t
