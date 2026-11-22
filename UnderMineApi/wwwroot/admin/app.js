@@ -53,6 +53,15 @@ function fmtBanExpiry(unixSeconds) {
     return 'until ' + fmtDate(unixSeconds);
 }
 
+function fmtPlayTime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${total}s`;
+}
+
 // Build failure messages are prefixed with an attempt counter ("2|error text").
 function cleanError(message) {
     if (!message) return '';
@@ -1010,57 +1019,70 @@ async function saveBuild() {
 
 // ---------- modpack import (.mrpack / CurseForge zip) ----------
 
-function importModpack(focusCurseForgeFile) {
+function importModpack() {
     showModal(`
-        <h3>Import Modpack (.mrpack or CurseForge .zip)</h3>
+        <h3>Import modpack</h3>
+        <p class="muted">Modrinth by project slug/ID, or a local .mrpack / CurseForge .zip.</p>
+
         <div class="form-group">
             <label>Bind build to server (optional)</label>
             <select id="mp-server"><option value="">— none —</option></select>
         </div>
-        <h4>From Modrinth</h4>
         <div class="form-group">
-            <label>Project slug or ID *</label>
-            <input type="text" id="mp-slug" placeholder="fabulously-optimized">
-        </div>
-        <div class="form-group">
-            <label>Build name (optional, shared with file import)</label>
+            <label>Build name (optional)</label>
             <input type="text" id="mp-name" placeholder="defaults to the modpack name">
         </div>
-        <div class="form-group">
-            <label>Version ID (optional — latest release is used)</label>
-            <input type="text" id="mp-version-id" placeholder="e.g. abc123...">
+
+        <div class="mp-tabs" role="tablist">
+            <button type="button" class="mp-tab active" data-action="mp-tab" data-tab="modrinth" role="tab" aria-selected="true">Modrinth</button>
+            <button type="button" class="mp-tab" data-action="mp-tab" data-tab="file" role="tab" aria-selected="false">CurseForge / file</button>
         </div>
+
+        <div id="mp-panel-modrinth" class="mp-panel">
+            <div class="form-group">
+                <label>Project slug or ID *</label>
+                <input type="text" id="mp-slug" placeholder="fabulously-optimized">
+            </div>
+            <div class="form-group">
+                <label>Version ID (optional — latest release is used)</label>
+                <input type="text" id="mp-version-id" placeholder="e.g. abc123…">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="mp-modrinth-btn" data-action="import-modpack-modrinth">Import from Modrinth</button>
+            </div>
+        </div>
+
+        <div id="mp-panel-file" class="mp-panel" hidden>
+            <div class="form-group">
+                <label>Modrinth .mrpack or CurseForge .zip, up to 1 GB</label>
+                <input type="file" id="mp-file" accept=".mrpack,.zip,application/zip">
+                <p class="hint">The format is detected from the archive contents, not the file name.
+                CurseForge packs need <code>CurseForge__ApiKey</code> on the server.</p>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>
+            </div>
+        </div>
+
         <div class="btn-group">
-            <button class="btn btn-primary" id="mp-modrinth-btn" data-action="import-modpack-modrinth">Import from Modrinth</button>
-        </div>
-        <hr>
-        <h4>From file (Modrinth or CurseForge)</h4>
-        <div class="form-group">
-            <label>.mrpack (Modrinth) or .zip (CurseForge) file, up to 1 GB</label>
-            <input type="file" id="mp-file" accept=".mrpack,.zip,application/zip">
-            <p class="hint">The format is detected from the archive contents, not from the file name.
-            CurseForge packs need <code>CurseForge__ApiKey</code> in the server's .env.</p>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-primary" id="mp-file-btn" data-action="import-modpack-file">Import file</button>
             <button class="btn" data-action="close-modal">Cancel</button>
         </div>
-        <p class="hint">The server auto-detects the format (Modrinth .mrpack or CurseForge .zip).
-        It prepares the matching engine (Fabric / Forge / NeoForge), downloads all client files
-        and applies pack overrides. Follow progress in the builds table.</p>
     `);
 
     loadModpackServers();
+}
 
-    // "Import from CurseForge" only makes sense for a pack downloaded from curseforge.com, so
-    // jump straight to the file field instead of making the admin hunt for it.
-    if (focusCurseForgeFile) {
-        const fileInput = document.getElementById('mp-file');
-        if (fileInput) {
-            fileInput.scrollIntoView({ block: 'center' });
-            fileInput.focus();
-        }
-    }
+function switchModpackTab(tab) {
+    document.querySelectorAll('.mp-tab').forEach(btn => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.mp-panel').forEach(panel => {
+        panel.hidden = panel.id !== `mp-panel-${tab}`;
+    });
+    const focusId = tab === 'modrinth' ? 'mp-slug' : 'mp-file';
+    document.getElementById(focusId)?.focus();
 }
 
 async function loadModpackServers() {
@@ -2031,12 +2053,18 @@ function viewBuildLogs(el) {
             }
             if (lines.length) {
                 lastId = data.latestId || lines[lines.length - 1].id;
-                view.insertAdjacentHTML('beforeend', lines.map(l =>
-                    `<div class="log-line log-${esc(l.level || 'info')}">
+                view.insertAdjacentHTML('beforeend', lines.map(l => {
+                    // Log messages arrive with blank lines around some stages; collapsing them
+                    // keeps the dialog compact without losing stack-trace line breaks.
+                    const text = String(l.message || '')
+                        .replace(/\r\n/g, '\n')
+                        .replace(/\n{2,}/g, '\n')
+                        .trim();
+                    return `<div class="log-line log-${esc(l.level || 'info')}">
                         <span class="log-time">${fmtLogTime(l.createdAt)}</span>
-                        <span>${esc(l.message)}</span>
-                     </div>`
-                ).join(''));
+                        <span>${esc(text)}</span>
+                     </div>`;
+                }).join(''));
                 view.scrollTop = view.scrollHeight;
             } else if (first) {
                 view.innerHTML = '<div class="muted">No log lines recorded yet.</div>';
@@ -2090,7 +2118,7 @@ async function loadUsers() {
             return `
             <tr>
                 <td>${u.id}</td>
-                <td>${esc(u.username)}</td>
+                <td><button type="button" class="user-link" data-action="view-user" data-id="${u.id}" title="View user statistics">${esc(u.username)}</button></td>
                 <td>${u.uuid ? esc(String(u.uuid).substring(0, 8)) + '…' : '—'}</td>
                 <td><span class="status ${roleClass}">${esc(u.role)}</span></td>
                 <td>${banned
@@ -2133,9 +2161,11 @@ function showModal(html) {
     document.getElementById('modal-body').innerHTML = html;
     // Dialogs with tables or raw JSON (manifest, preset mods, Modrinth search) need room.
     const wide = /<(table|pre)\b|class="[^"]*\blog-view\b/.test(html);
+    const logs = /class="[^"]*\blog-view\b/.test(html);
     const modal = document.getElementById('modal');
     closeEditorRowMenu();
     modal.classList.toggle('wide', wide);
+    modal.classList.toggle('logs', logs);
     modal.classList.remove('editor');
     modal.classList.add('active');
 }
@@ -2149,7 +2179,7 @@ function closeModal() {
 
     stopBuildLogRefresh();
     closeEditorRowMenu();
-    modal.classList.remove('active', 'editor');
+    modal.classList.remove('active', 'editor', 'logs');
     editorDirty = false;
     editorBuild = null;
     editorFiles = [];
@@ -2167,6 +2197,53 @@ document.getElementById('modal').addEventListener('click', (e) => {
 });
 
 // ---------- user actions ----------
+
+async function viewUser(id) {
+    try {
+        const s = await api(`/admin/users/${id}/statistics`);
+        const roleClass = String(s.role || '').toLowerCase() === 'admin'
+            ? 'status-role-admin'
+            : 'status-role-user';
+        const ipRows = (s.ipHistory || []).map(h => `
+            <tr>
+                <td>${esc(h.ip)}</td>
+                <td>${fmtDate(h.firstSeen)}</td>
+                <td>${fmtDate(h.lastSeen)}</td>
+                <td>${Number(h.seenCount) || 0}</td>
+            </tr>`).join('');
+        const ban = s.isBanned
+            ? `<p class="hint">Banned: ${esc(s.banReason || 'no reason')} · ${fmtBanExpiry(s.banExpiresAt)} · by ${esc(s.bannedBy || '—')}</p>`
+            : '';
+
+        showModal(`
+            <h3>${esc(s.username)} <span class="status ${roleClass}">${esc(s.role)}</span></h3>
+            <p class="muted">ID ${s.id} · UUID ${esc(s.uuid || '—')}</p>
+            <div class="detail-grid">
+                <div><span class="detail-label">Registered</span>${fmtDate(s.regDate)}</div>
+                <div><span class="detail-label">Last login</span>${fmtDate(s.lastLogin)}</div>
+                <div><span class="detail-label">Play time</span>${fmtPlayTime(s.playTime)}</div>
+                <div><span class="detail-label">Murders / deaths</span>${Number(s.murders) || 0} / ${Number(s.deaths) || 0}</div>
+                <div><span class="detail-label">Registration IP</span>${esc(s.regIp || '—')}</div>
+                <div><span class="detail-label">Last IP</span>${esc(s.lastIp || '—')}</div>
+                <div><span class="detail-label">Email</span>${esc(s.email || '—')}</div>
+                <div><span class="detail-label">Status</span>${s.isBanned ? 'Banned' : 'OK'}</div>
+            </div>
+            ${ban}
+            <h4>IP history</h4>
+            ${ipRows
+                ? `<div class="ip-history"><table class="table">
+                       <thead><tr><th>IP</th><th>First seen</th><th>Last seen</th><th>Seen</th></tr></thead>
+                       <tbody>${ipRows}</tbody>
+                   </table></div>`
+                : '<p class="muted">No login IPs recorded yet.</p>'}
+            <div class="btn-group">
+                <button class="btn" data-action="close-modal">Close</button>
+            </div>
+        `);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
 
 function banUser(id) {
     showModal(`
@@ -2360,8 +2437,7 @@ async function confirmDeleteUser(id) {
 
 document.getElementById('add-server-btn').addEventListener('click', addServer);
 document.getElementById('add-build-btn').addEventListener('click', addBuild);
-document.getElementById('import-modpack-btn').addEventListener('click', () => importModpack(false));
-document.getElementById('import-curseforge-btn').addEventListener('click', () => importModpack(true));
+document.getElementById('import-modpack-btn').addEventListener('click', importModpack);
 
 document.getElementById('user-search').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
@@ -2433,6 +2509,7 @@ document.addEventListener('click', (event) => {
         case 'save-build': saveBuild(); break;
         case 'import-modpack-modrinth': importModpackFromModrinth(); break;
         case 'import-modpack-file': importModpackFromFile(); break;
+        case 'mp-tab': switchModpackTab(button.dataset.tab); break;
         case 'delete-build': deleteBuild(Number(button.dataset.id)); break;
         case 'open-build-editor': openBuildEditor(Number(button.dataset.id)); break;
         case 'editor-tab': switchEditorTab(button.dataset.tab); break;
@@ -2453,6 +2530,7 @@ document.addEventListener('click', (event) => {
         case 'editor-refresh-manifest': loadEditorManifest(); break;
         case 'editor-download-manifest': downloadEditorManifest(); break;
         case 'unban-user': unbanUser(Number(button.dataset.id)); break;
+        case 'view-user': viewUser(Number(button.dataset.id)); break;
         case 'ban-user': banUser(Number(button.dataset.id)); break;
         case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
         case 'confirm-role': confirmRole(Number(button.dataset.id)); break;
