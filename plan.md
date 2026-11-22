@@ -725,6 +725,12 @@ S3__ManageBucket=false
 - [x] Staging закрыт basic auth на nginx (`/api/`, `/admin/`);
       `/health` и `/builds/` публичные.
 - [x] На время failover staging останавливается, чтобы не мешать standby.
+- [x] Импорт CurseForge-модпака на staging (1.21.1, NeoForge 21.1.262):
+      сборка завершена, файлы загружены в Garage.
+- [x] Исправлен обрезанный `S3__SecretKey` в `kv/undermine-api/app-staging`:
+      было 59 символов вместо 64, из-за чего Garage отвечал
+      `403 Forbidden: Invalid signature`. После исправления в staging-бакете
+      4127 объектов, сборка `bd93166e...` завершилась успешно.
 
 **Готово, когда:** merge в `master` автоматически обновляет staging,
 `/health/ready` зелёный.

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Minio;
 using Minio.DataModel.Args;
+using Minio.Exceptions;
 using UnderMineApi.Options;
 
 namespace UnderMineApi.Services
@@ -181,9 +182,13 @@ namespace UnderMineApi.Services
                     return (s3Key, false);
                 }
             }
-            catch
+            catch (ObjectNotFoundException)
             {
-                // File doesn't exist, proceed with upload
+                // Expected for a new object; proceed with the upload.
+            }
+            catch (BucketNotFoundException)
+            {
+                // The PUT below reports the missing bucket with full context.
             }
 
             // Upload with metadata - MinIO v6 API uses WithStreamData. A zero-length file
