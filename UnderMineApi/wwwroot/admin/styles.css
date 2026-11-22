@@ -473,8 +473,8 @@ body {
 }
 
 .activity-toolbar {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: center;
     gap: 10px;
     padding: 14px 16px;
@@ -482,7 +482,7 @@ body {
 }
 
 .activity-toolbar .search-bar {
-    flex: 1 1 260px;
+    grid-column: 1 / -1;
     margin-bottom: 0;
 }
 
@@ -491,6 +491,8 @@ body {
 }
 
 .activity-select {
+    width: 100%;
+    min-width: 0;
     background: var(--input);
     color: var(--text);
     border: 1px solid var(--line);
@@ -631,6 +633,14 @@ body {
 }
 
 @media (max-width: 700px) {
+    .activity-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .activity-toolbar .search-bar {
+        grid-column: auto;
+    }
+
     .activity-side {
         grid-template-columns: 1fr;
     }
