@@ -132,6 +132,10 @@ services:
   - `PUT /api/v1.0/admin/permissions/{role}` — заменить набор прав роли
     `moderator` или `user` телом `{ "permissions": ["servers.view", ...] }`
     (только администратор). Роль `admin` всегда имеет все права.
+  - `GET /api/v1.0/admin/activity` — журнал действий администраторов (`activity.view`):
+    пагинация, фильтры `actor`, `action`, `targetType`, `query`, глубина `days`,
+    а также сводка (`todayCount`, `last7DaysCount`, `topActions`, `topActors`)
+    и варианты для фильтров.
   - `GET /api/v1.0/admin/users` — список пользователей (пагинация; право
     `users.ban`, `users.change_password` или `users.change_role`).
   - `GET /api/v1.0/admin/users/{id}/statistics` — персональная статистика:
@@ -155,9 +159,10 @@ services:
   - `POST /api/v1.0/admin/status/maintenance?enabled=true|false` — включение/выключение maintenance mode (только администратор; сохраняется в `GlobalSettings`).
 
   Права: `servers.view`, `servers.create`, `servers.edit`, `builds.upload`,
-  `presets.create`, `users.ban`, `users.change_password`, `users.change_role`.
+  `presets.create`, `users.ban`, `users.change_password`, `users.change_role`,
+  `activity.view`.
   Роль `admin` имеет все права неявно; для `moderator` при миграции заводятся
-  права по умолчанию (всё, кроме смены паролей и ролей).
+  права по умолчанию (всё, кроме смены паролей, смены ролей и журнала Activity).
 
 ## Примеры curl
 

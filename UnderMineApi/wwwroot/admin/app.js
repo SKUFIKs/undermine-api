@@ -11,6 +11,16 @@ let searchTimer = null;
 let userQuery = '';
 let serverBuilds = []; // completed builds offered by the server-modal build picker
 
+// Activity log filtering/paging state.
+let activityPage = 1;
+let activityTotalPages = 0;
+const activityPageSize = 25;
+let activityQuery = '';
+let activityAction = '';
+let activityActor = '';
+let activityDays = 0;
+let activitySearchTimer = null;
+
 // Effective access of the signed-in account, loaded from /admin/me. The admin role always
 // has every permission; moderator/user permissions are configured in Settings.
 let myPermissions = new Set();
@@ -65,6 +75,60 @@ function roleStatusClass(role) {
     if (value === 'admin') return 'status-role-admin';
     if (value === 'moderator') return 'status-role-moderator';
     return 'status-role-user';
+}
+
+const ACTIVITY_ACTION_LABELS = {
+    create_server: 'Create server',
+    update_server: 'Update server',
+    delete_server: 'Delete server',
+    create_build: 'Create build',
+    delete_build: 'Delete build',
+    import_modpack: 'Import modpack',
+    create_preset: 'Create preset',
+    update_preset: 'Update preset',
+    delete_preset: 'Delete preset',
+    add_preset_mod: 'Add preset mod',
+    add_preset_custom_file: 'Add preset file',
+    delete_preset_mod: 'Delete preset mod',
+    toggle_preset_mod: 'Toggle preset mod',
+    ban_user: 'Ban user',
+    unban_user: 'Unban user',
+    change_role: 'Change role',
+    change_password: 'Change password',
+    change_own_password: 'Change own password',
+    delete_user: 'Delete user',
+    update_role_permissions: 'Update role permissions',
+    set_maintenance: 'Set maintenance mode',
+    create_build_directory: 'Create build folder',
+    delete_build_directory: 'Delete build folder',
+    update_build_settings: 'Update build settings',
+    delete_build_file: 'Delete build file',
+    rename_build_file: 'Rename build file',
+    upload_build_file: 'Upload build file',
+    create_build_file: 'Create build file'
+};
+
+function activityActionLabel(action) {
+    const key = String(action || '').toLowerCase();
+    if (ACTIVITY_ACTION_LABELS[key]) return ACTIVITY_ACTION_LABELS[key];
+    return key
+        .split('_')
+        .filter(Boolean)
+        .map(word => word[0].toUpperCase() + word.slice(1))
+        .join(' ') || action;
+}
+
+function activityActionClass(action) {
+    const key = String(action || '').toLowerCase();
+    if (/^(delete|ban|change_password)/.test(key)) return 'activity-action-danger';
+    if (/^(update|change|set_|rename|toggle_)/.test(key)) return 'activity-action-warn';
+    if (/^(create|add_|import|upload)/.test(key)) return 'activity-action-create';
+    return '';
+}
+
+function truncateText(value, max) {
+    const text = String(value || '');
+    return text.length > max ? text.slice(0, max - 1) + '…' : text;
 }
 
 function val(id) {
@@ -294,6 +358,7 @@ function pageAllowed(page) {
         case 'builds': return can('builds.upload');
         case 'presets': return can('presets.create');
         case 'users': return can('users.view');
+        case 'activity': return can('activity.view');
         case 'settings': return isAdmin;
         default: return false;
     }
@@ -343,6 +408,7 @@ async function loadPage(page) {
         case 'builds': await loadBuilds(); startBuildsRefresh(); break;
         case 'presets': await loadPresets(); break;
         case 'users': await loadUsers(); break;
+        case 'activity': await loadActivity(); break;
         case 'settings': await loadSettings(); break;
     }
 }
@@ -2253,6 +2319,169 @@ async function loadUsers() {
     }
 }
 
+// ---------- activity ----------
+
+async function loadActivity(resetPage = false) {
+    if (resetPage) activityPage = 1;
+
+    try {
+        const params = new URLSearchParams({
+            page: String(activityPage),
+            pageSize: String(activityPageSize),
+            days: String(activityDays)
+        });
+        if (activityQuery) params.set('query', activityQuery);
+        if (activityAction) params.set('action', activityAction);
+        if (activityActor) params.set('actor', activityActor);
+
+        const data = await api('/admin/activity?' + params.toString());
+        activityTotalPages = (data && data.totalPages) || 0;
+
+        // Deletions/retention may leave the current page empty; fall back to the last page.
+        if (activityPage > 1 && activityTotalPages > 0 && activityPage > activityTotalPages) {
+            activityPage = activityTotalPages;
+            return loadActivity();
+        }
+
+        renderActivitySummary(data.summary || {});
+        renderActivityFilters(data.filterOptions || {});
+        updateActivityPager(data);
+        renderActivityTable(data.items || []);
+        renderActivityTop(data.summary || {});
+    } catch (e) {
+        console.error(e);
+        toast('error', 'Failed to load activity: ' + e.message);
+    }
+}
+
+function renderActivitySummary(summary) {
+    const set = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value ?? 0);
+    };
+
+    set('activity-stat-total', summary.totalCount || 0);
+    set('activity-stat-today', summary.todayCount || 0);
+    set('activity-stat-week', summary.last7DaysCount || 0);
+    set('activity-stat-actors', summary.uniqueActors || 0);
+}
+
+function renderActivityFilters(options) {
+    const actionSelect = document.getElementById('activity-action-filter');
+    const actorSelect = document.getElementById('activity-actor-filter');
+    if (!actionSelect || !actorSelect) return;
+
+    actionSelect.innerHTML = '<option value="">All actions</option>' + (options.actions || [])
+        .map(action => `<option value="${esc(action)}" ${action === activityAction ? 'selected' : ''}>${esc(activityActionLabel(action))}</option>`)
+        .join('');
+    actionSelect.value = activityAction;
+
+    actorSelect.innerHTML = '<option value="">All actors</option>' + (options.actors || [])
+        .map(actor => `<option value="${esc(actor)}" ${actor === activityActor ? 'selected' : ''}>${esc(actor)}</option>`)
+        .join('');
+    actorSelect.value = activityActor;
+}
+
+function updateActivityPager(data) {
+    const info = document.getElementById('activity-page-info');
+    const prev = document.getElementById('activity-prev');
+    const next = document.getElementById('activity-next');
+    if (!info || !prev || !next) return;
+
+    const page = (data && data.page) || activityPage;
+    const totalPages = (data && data.totalPages) || 0;
+    const totalCount = (data && data.totalCount) || 0;
+
+    info.textContent = totalCount === 0
+        ? 'No activity'
+        : `Page ${page} / ${Math.max(totalPages, 1)} · ${totalCount} events`;
+
+    prev.disabled = page <= 1;
+    next.disabled = totalPages === 0 || page >= totalPages;
+}
+
+function activityTargetLabel(targetType) {
+    const text = String(targetType || '').replace(/_/g, ' ').trim();
+    return text ? text[0].toUpperCase() + text.slice(1) : '';
+}
+
+function renderActivityTable(items) {
+    const tbody = document.querySelector('#activity-table tbody');
+    if (!tbody) return;
+
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5">No activity matches these filters.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = items.map(item => {
+        const target = item.targetType
+            ? `${activityTargetLabel(item.targetType)}${item.targetId !== null && item.targetId !== undefined ? ` #${item.targetId}` : ''}`
+            : '—';
+        const details = item.details || '';
+
+        return `
+            <tr>
+                <td class="activity-when">${fmtDate(item.createdAt)}</td>
+                <td><span class="activity-actor">${esc(item.actor)}</span></td>
+                <td>
+                    <span class="activity-action ${activityActionClass(item.action)}" title="${esc(item.action)}">${esc(activityActionLabel(item.action))}</span>
+                    <small class="activity-action-key">${esc(item.action)}</small>
+                </td>
+                <td class="activity-target">${esc(target)}</td>
+                <td class="activity-details" title="${esc(details)}">${esc(truncateText(details, 160)) || '—'}</td>
+            </tr>`;
+    }).join('');
+}
+
+function renderActivityTop(summary) {
+    const actionsHost = document.getElementById('activity-top-actions');
+    const actorsHost = document.getElementById('activity-top-actors');
+    if (!actionsHost || !actorsHost) return;
+
+    const topActions = summary.topActions || [];
+    const maxAction = Math.max(...topActions.map(x => Number(x.count) || 0), 1);
+
+    actionsHost.innerHTML = topActions.length
+        ? topActions.map(item => `
+            <div class="activity-bar-row">
+                <div class="activity-bar-head">
+                    <span>${esc(activityActionLabel(item.name))}</span>
+                    <strong>${Number(item.count) || 0}</strong>
+                </div>
+                <div class="activity-bar"><div class="activity-bar-fill" style="width:${Math.max(4, (Number(item.count) || 0) / maxAction * 100)}%"></div></div>
+            </div>`).join('')
+        : '<p class="muted">No activity.</p>';
+
+    const topActors = summary.topActors || [];
+    actorsHost.innerHTML = topActors.length
+        ? topActors.map(item => `
+            <div class="activity-actor-row">
+                <span class="activity-actor">${esc(item.name)}</span>
+                <strong>${Number(item.count) || 0}</strong>
+            </div>`).join('')
+        : '<p class="muted">No activity.</p>';
+}
+
+function clearActivityFilters() {
+    activityQuery = '';
+    activityAction = '';
+    activityActor = '';
+    activityDays = 0;
+    activityPage = 1;
+
+    const search = document.getElementById('activity-search');
+    const range = document.getElementById('activity-range');
+    const action = document.getElementById('activity-action-filter');
+    const actor = document.getElementById('activity-actor-filter');
+    if (search) search.value = '';
+    if (range) range.value = '0';
+    if (action) action.value = '';
+    if (actor) actor.value = '';
+
+    loadActivity(true);
+}
+
 // ---------- settings ----------
 
 async function loadSettings() {
@@ -2746,6 +2975,49 @@ document.getElementById('builds-status-filter')?.addEventListener('change', (e) 
     buildsStatus = e.target.value || '';
     buildsPage = 1;
     loadBuilds();
+});
+
+// Activity: filters and paging.
+document.getElementById('activity-refresh-btn')?.addEventListener('click', () => loadActivity());
+
+document.getElementById('activity-search')?.addEventListener('input', (e) => {
+    clearTimeout(activitySearchTimer);
+    const value = e.target.value.trim();
+    activitySearchTimer = setTimeout(() => {
+        activityQuery = value;
+        loadActivity(true);
+    }, 350);
+});
+
+document.getElementById('activity-range')?.addEventListener('change', (e) => {
+    activityDays = Number(e.target.value) || 0;
+    loadActivity(true);
+});
+
+document.getElementById('activity-action-filter')?.addEventListener('change', (e) => {
+    activityAction = e.target.value || '';
+    loadActivity(true);
+});
+
+document.getElementById('activity-actor-filter')?.addEventListener('change', (e) => {
+    activityActor = e.target.value || '';
+    loadActivity(true);
+});
+
+document.getElementById('activity-clear')?.addEventListener('click', clearActivityFilters);
+
+document.getElementById('activity-prev')?.addEventListener('click', () => {
+    if (activityPage > 1) {
+        activityPage--;
+        loadActivity();
+    }
+});
+
+document.getElementById('activity-next')?.addEventListener('click', () => {
+    if (activityTotalPages > 0 && activityPage < activityTotalPages) {
+        activityPage++;
+        loadActivity();
+    }
 });
 
 // Build editor: live search and dirty tracking. The file list is re-rendered on every

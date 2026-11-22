@@ -109,6 +109,9 @@ namespace UnderMineApi.Data
                 entity.ToTable("admin_audits");
                 entity.Property(e => e.Actor).HasMaxLength(100);
                 entity.Property(e => e.Action).HasMaxLength(100);
+
+                // Activity page: newest-first paging and date-range filters.
+                entity.HasIndex(e => e.CreatedAt);
             });
 
             modelBuilder.Entity<UnderMineApi.Domain.Entities.BuildInstance>(entity =>

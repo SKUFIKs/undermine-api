@@ -555,6 +555,8 @@ namespace UnderMineApi.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedAt");
+
                     b.ToTable("admin_audits", (string)null);
                 });
 

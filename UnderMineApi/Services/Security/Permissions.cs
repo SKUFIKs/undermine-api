@@ -31,6 +31,7 @@ public static class Permissions
     public const string UsersBan = "users.ban";
     public const string UsersChangePassword = "users.change_password";
     public const string UsersChangeRole = "users.change_role";
+    public const string ActivityView = "activity.view";
 
     /// <summary>
     /// Pseudo-policy for "can open the Users page". A role needs at least one of the user
@@ -53,7 +54,8 @@ public static class Permissions
         new PermissionDescriptor(PresetsCreate, "Create presets", "Create and manage build presets and their mods."),
         new PermissionDescriptor(UsersBan, "Ban users", "View the user list, ban and unban regular users."),
         new PermissionDescriptor(UsersChangePassword, "Change user passwords", "Reset the password of a regular user."),
-        new PermissionDescriptor(UsersChangeRole, "Change user roles", "Change roles between user and moderator.")
+        new PermissionDescriptor(UsersChangeRole, "Change user roles", "Change roles between user and moderator."),
+        new PermissionDescriptor(ActivityView, "View activity", "Read the administrative action log and its statistics.")
     };
 
     public static readonly IReadOnlySet<string> AllKeys =

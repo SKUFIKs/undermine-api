@@ -62,6 +62,7 @@ public class PermissionServiceTests : IDisposable
         Assert.Contains(Permissions.UsersBan, permissions);
         Assert.DoesNotContain(Permissions.UsersChangeRole, permissions);
         Assert.DoesNotContain(Permissions.UsersChangePassword, permissions);
+        Assert.DoesNotContain(Permissions.ActivityView, permissions);
     }
 
     [Fact]

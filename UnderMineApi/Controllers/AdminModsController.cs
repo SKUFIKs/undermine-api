@@ -21,18 +21,23 @@ public class AdminModsController : ControllerBase
     private readonly ModrinthService _modrinthService;
     private readonly CustomArtifactService _customArtifactService;
     private readonly S3StorageService _s3Storage;
+    private readonly AdminAuditService _audit;
 
     public AdminModsController(
         AppDbContext context,
         ModrinthService modrinthService,
         CustomArtifactService customArtifactService,
-        S3StorageService s3Storage)
+        S3StorageService s3Storage,
+        AdminAuditService audit)
     {
         _context = context;
         _modrinthService = modrinthService;
         _customArtifactService = customArtifactService;
         _s3Storage = s3Storage;
+        _audit = audit;
     }
+
+    private string Actor => LogSanitizer.Clean(User.Identity?.Name ?? "system");
 
     [HttpGet("presets/{presetId}/mods")]
     public async Task<IActionResult> GetMods(long presetId, CancellationToken ct)
@@ -135,6 +140,8 @@ public class AdminModsController : ControllerBase
 
         _context.BuildPresetMods.Add(mod);
         await _context.SaveChangesAsync(ct);
+        await _audit.LogAsync(Actor, "add_preset_mod", "preset", presetId,
+            $"{request.SlugOrId} -> {targetFolder}", ct);
 
         var dto = new ModPresetModDto
         {
@@ -195,6 +202,8 @@ public class AdminModsController : ControllerBase
 
             _context.BuildPresetMods.Add(mod);
             await _context.SaveChangesAsync(ct);
+            await _audit.LogAsync(Actor, "add_preset_custom_file", "preset", presetId,
+                $"{result.FileName} -> {targetFolder}", ct);
 
             var dto = new ModPresetModDto
             {
@@ -243,6 +252,8 @@ public class AdminModsController : ControllerBase
 
         _context.BuildPresetMods.Remove(mod);
         await _context.SaveChangesAsync(ct);
+        await _audit.LogAsync(Actor, "delete_preset_mod", "preset", presetId,
+            mod.ModrinthSlugOrId ?? mod.CustomFileName ?? mod.Id.ToString(), ct);
         return NoContent();
     }
 
@@ -259,6 +270,8 @@ public class AdminModsController : ControllerBase
         mod.IsEnabled = request?.Enabled ?? !mod.IsEnabled;
         mod.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
+        await _audit.LogAsync(Actor, "toggle_preset_mod", "preset", presetId,
+            $"{mod.ModrinthSlugOrId ?? mod.CustomFileName ?? mod.Id.ToString()} = {(mod.IsEnabled ? "enabled" : "disabled")}", ct);
 
         return Ok(new { mod.Id, mod.IsEnabled });
     }
