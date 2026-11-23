@@ -45,6 +45,9 @@
                     <li><a href="#" data-page="users">
                         <svg class="nav-ico" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                         <span class="nav-txt">Users</span></a></li>
+                    <li><a href="#" data-page="reports">
+                        <svg class="nav-ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="12" y1="9" x2="12.01" y2="9"/></svg>
+                        <span class="nav-txt">Reports</span></a></li>
                     <li><a href="#" data-page="activity">
                         <svg class="nav-ico" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                         <span class="nav-txt">Activity</span></a></li>
@@ -219,6 +222,76 @@
                             </thead>
                             <tbody></tbody>
                         </table>
+                    </div>
+                </section>
+
+                <!-- Crash reports -->
+                <section id="page-reports" class="page">
+                    <div class="page-head">
+                        <div>
+                            <h2>Crash Reports</h2>
+                            <p class="page-sub">Launcher and Minecraft logs submitted by players</p>
+                        </div>
+                        <div class="page-actions">
+                            <button id="reports-refresh-btn" class="btn">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Open</h3>
+                            <p id="reports-stat-new">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Investigating</h3>
+                            <p id="reports-stat-investigating">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Resolved</h3>
+                            <p id="reports-stat-resolved">-</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Last 24h</h3>
+                            <p id="reports-stat-24h">-</p>
+                        </div>
+                    </div>
+
+                    <div class="table-card reports-table">
+                        <div class="activity-toolbar">
+                            <div class="search-bar activity-search">
+                                <input type="text" id="reports-search" placeholder="Search player, device, server or title...">
+                            </div>
+                            <select id="reports-status-filter" class="activity-select">
+                                <option value="">All statuses</option>
+                                <option value="new">New</option>
+                                <option value="investigating">Investigating</option>
+                                <option value="resolved">Resolved</option>
+                            </select>
+                            <select id="reports-kind-filter" class="activity-select">
+                                <option value="">All kinds</option>
+                                <option value="launcher">Launcher</option>
+                                <option value="minecraft">Minecraft</option>
+                            </select>
+                        </div>
+                        <table id="reports-table">
+                            <thead>
+                                <tr>
+                                    <th>When</th>
+                                    <th>Player</th>
+                                    <th>Kind</th>
+                                    <th>Title</th>
+                                    <th>Files</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <div class="table-pager">
+                            <button id="reports-prev" class="btn btn-sm" disabled>Previous</button>
+                            <span id="reports-page-info" class="muted">Page 1</span>
+                            <button id="reports-next" class="btn btn-sm" disabled>Next</button>
+                        </div>
                     </div>
                 </section>
 

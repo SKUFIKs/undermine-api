@@ -22,6 +22,15 @@ let activityDays = 0;
 let activitySearchTimer = null;
 let evidenceObjectUrl = null;
 
+// Crash reports filtering/paging state
+let reportsPage = 1;
+let reportsTotalPages = 0;
+const reportsPageSize = 20;
+let reportsStatus = '';
+let reportsKind = '';
+let reportsQuery = '';
+let reportsSearchTimer = null;
+
 // Effective access of the signed-in account, loaded from /admin/me. The admin role always
 // has every permission; moderator/user permissions are configured in Settings.
 let myPermissions = new Set();
@@ -103,6 +112,8 @@ const ACTIVITY_ACTION_LABELS = {
     create_build_directory: 'Create build folder',
     delete_build_directory: 'Delete build folder',
     update_build_settings: 'Update build settings',
+    update_client_report: 'Update crash report',
+    delete_client_report: 'Delete crash report',
     delete_build_file: 'Delete build file',
     rename_build_file: 'Rename build file',
     upload_build_file: 'Upload build file',
@@ -392,6 +403,7 @@ function pageAllowed(page) {
         case 'builds': return can('builds.upload');
         case 'presets': return can('presets.create');
         case 'users': return can('users.view');
+        case 'reports': return can('reports.view');
         case 'activity': return can('activity.view');
         case 'settings': return isAdmin;
         default: return false;
@@ -442,6 +454,7 @@ async function loadPage(page) {
         case 'builds': await loadBuilds(); startBuildsRefresh(); break;
         case 'presets': await loadPresets(); break;
         case 'users': await loadUsers(); break;
+        case 'reports': await loadReports(); break;
         case 'activity': await loadActivity(); break;
         case 'settings': await loadSettings(); break;
     }
@@ -2586,6 +2599,251 @@ async function saveRolePermissions(role) {
     }
 }
 
+// ---------- crash reports ----------
+
+function reportStatusBadge(status) {
+    const value = String(status || 'new').toLowerCase();
+    const cls = value === 'resolved'
+        ? 'status-completed'
+        : value === 'investigating'
+            ? 'status-hashing'
+            : 'status-pending';
+    return `<span class="status ${cls}">${esc(value)}</span>`;
+}
+
+async function loadReports(resetPage = false) {
+    if (resetPage) reportsPage = 1;
+
+    const params = new URLSearchParams({
+        page: String(reportsPage),
+        pageSize: String(reportsPageSize)
+    });
+    if (reportsStatus) params.set('status', reportsStatus);
+    if (reportsKind) params.set('kind', reportsKind);
+    if (reportsQuery) params.set('query', reportsQuery);
+
+    try {
+        const [page, stats] = await Promise.all([
+            api(`/admin/reports?${params.toString()}`),
+            api('/admin/reports/stats')
+        ]);
+        renderReports(page || {});
+        renderReportStats(stats || {});
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+function renderReportStats(stats) {
+    const set = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value ?? 0;
+    };
+    set('reports-stat-new', stats.new);
+    set('reports-stat-investigating', stats.investigating);
+    set('reports-stat-resolved', stats.resolved);
+    set('reports-stat-24h', stats.last24h);
+}
+
+function renderReports(page) {
+    const tbody = document.querySelector('#reports-table tbody');
+    if (!tbody) return;
+
+    const items = page.items || [];
+    reportsTotalPages = page.totalPages || 0;
+    reportsPage = page.page || 1;
+
+    if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">No crash reports yet.</td></tr>';
+    } else {
+        tbody.innerHTML = items.map(r => {
+            const player = r.username
+                ? `@${esc(r.username)}`
+                : '<span class="muted">anonymous</span>';
+            const device = r.deviceId
+                ? `<br><small class="muted">${esc(String(r.deviceId).slice(0, 16))}…</small>`
+                : '';
+            const deleteBtn = can('reports.manage')
+                ? `<button class="btn btn-sm btn-danger" data-action="delete-report" data-id="${r.id}">Delete</button>`
+                : '';
+
+            return `<tr>
+                <td>${fmtDate(r.createdAt)}</td>
+                <td>${player}${device}</td>
+                <td><span class="badge ${r.kind === 'minecraft' ? 'badge-on' : 'badge-off'}">${esc(r.kind)}</span></td>
+                <td>${esc(r.title)}</td>
+                <td>${r.fileCount} · ${fmtBytes(r.totalBytes)}</td>
+                <td>${reportStatusBadge(r.status)}</td>
+                <td>
+                    <button class="btn btn-sm" data-action="view-report" data-id="${r.id}">View</button>
+                    ${deleteBtn}
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    const info = document.getElementById('reports-page-info');
+    if (info) {
+        info.textContent = reportsTotalPages > 0
+            ? `Page ${reportsPage} / ${reportsTotalPages}`
+            : 'Page 1';
+    }
+
+    const prev = document.getElementById('reports-prev');
+    const next = document.getElementById('reports-next');
+    if (prev) prev.disabled = reportsPage <= 1;
+    if (next) next.disabled = reportsTotalPages === 0 || reportsPage >= reportsTotalPages;
+}
+
+async function viewReport(id) {
+    try {
+        const report = await api(`/admin/reports/${id}`);
+        const manage = can('reports.manage');
+
+        const files = (report.files || []).map(f => `
+            <tr>
+                <td>${esc(f.kind)}</td>
+                <td>${esc(f.fileName)}</td>
+                <td>${fmtBytes(f.size)}</td>
+                <td>
+                    <button class="btn btn-sm" data-action="view-report-file"
+                            data-report="${report.id}" data-file="${f.id}">View</button>
+                    <button class="btn btn-sm" data-action="download-report-file"
+                            data-report="${report.id}" data-file="${f.id}">Download</button>
+                </td>
+            </tr>`).join('');
+
+        const statusOptions = ['new', 'investigating', 'resolved']
+            .map(s => `<option value="${s}" ${s === report.status ? 'selected' : ''}>${s}</option>`)
+            .join('');
+
+        showModal(`
+            <h3>Report #${report.id} · ${esc(report.title)}</h3>
+            <p class="hint">
+                ${report.username ? `Player @${esc(report.username)}` : 'Anonymous report'}
+                · ${esc(report.kind)} · ${fmtDate(report.createdAt)}
+                ${report.serverName ? ` · server ${esc(report.serverName)}` : ''}
+            </p>
+
+            <div class="report-meta">
+                <div><span>Status</span><strong>${reportStatusBadge(report.status)}</strong></div>
+                <div><span>Launcher</span><strong>${esc(report.launcherVersion || '—')}</strong></div>
+                <div><span>Minecraft</span><strong>${esc(report.minecraftVersion || '—')}</strong></div>
+                <div><span>Loader</span><strong>${esc(report.loader || '—')}</strong></div>
+                <div><span>Device</span><strong>${esc(report.deviceId || '—')}</strong></div>
+                <div><span>OS</span><strong>${esc(report.os || '—')}</strong></div>
+                <div><span>IP</span><strong>${esc(report.ip || '—')}</strong></div>
+                <div><span>Consent</span><strong>v${esc(report.consentVersion)}</strong></div>
+            </div>
+
+            ${report.summary
+                ? `<h4>Summary</h4><pre class="json-view">${esc(report.summary)}</pre>`
+                : ''}
+
+            <h4>Files</h4>
+            ${files
+                ? `<table class="report-files">
+                       <thead><tr><th>Kind</th><th>Name</th><th>Size</th><th></th></tr></thead>
+                       <tbody>${files}</tbody>
+                   </table>`
+                : '<p class="muted">No files.</p>'}
+
+            ${manage ? `
+                <h4>Support workflow</h4>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="report-status">${statusOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label>Admin note</label>
+                    <textarea id="report-note" rows="4" maxlength="4000"
+                              placeholder="What was found and what to tell the player...">${esc(report.adminNote || '')}</textarea>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" data-action="save-report" data-id="${report.id}">Save</button>
+                </div>
+            ` : ''}
+
+            ${report.resolvedAt
+                ? `<p class="hint">Resolved ${fmtDate(report.resolvedAt)} by ${esc(report.resolvedBy || '—')}</p>`
+                : ''}
+        `);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function saveReport(id) {
+    const status = document.getElementById('report-status')?.value || null;
+    const note = document.getElementById('report-note')?.value ?? null;
+
+    try {
+        await api(`/admin/reports/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status, adminNote: note })
+        });
+        toast('success', 'Report updated');
+        closeModal();
+        await loadReports();
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function deleteReport(id) {
+    if (!confirm(`Delete report #${id}? This cannot be undone.`)) return;
+
+    try {
+        await api(`/admin/reports/${id}`, { method: 'DELETE' });
+        toast('success', 'Report deleted');
+        await loadReports();
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function downloadReportFile(el) {
+    const reportId = el?.dataset?.report;
+    const fileId = el?.dataset?.file;
+    if (!reportId || !fileId) return;
+
+    try {
+        const blob = await apiBlob(`/admin/reports/${reportId}/files/${fileId}`);
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `report-${reportId}-${fileId}.log`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
+async function viewReportFile(el) {
+    const reportId = el?.dataset?.report;
+    const fileId = el?.dataset?.file;
+    if (!reportId || !fileId) return;
+
+    try {
+        const blob = await apiBlob(`/admin/reports/${reportId}/files/${fileId}`);
+
+        if (blob.size > 2 * 1024 * 1024) {
+            toast('error', 'This file is larger than 2 MB — download it to inspect.');
+            return;
+        }
+
+        const text = await blob.text();
+        showModal(`<h3>Report file</h3><pre class="log-view">${esc(text)}</pre>`);
+    } catch (e) {
+        toast('error', e.message);
+    }
+}
+
 // ---------- modal ----------
 
 function showModal(html) {
@@ -2794,13 +3052,22 @@ function syncBanForm() {
 
     const list = document.getElementById('ban-evidence-list');
     if (list) {
-        list.innerHTML = files.map(file => {
+        list.innerHTML = '';
+        for (const file of files) {
             const tooLarge = file.size > 10 * 1024 * 1024;
-            return `<li class="${tooLarge ? 'invalid' : ''}">
-                        <span>${esc(file.name)}</span>
-                        <small>${fmtBytes(file.size)}${tooLarge ? ' · over 10 MB' : ''}</small>
-                    </li>`;
-        }).join('');
+
+            const item = document.createElement('li');
+            if (tooLarge) item.className = 'invalid';
+
+            const name = document.createElement('span');
+            name.textContent = file.name;
+
+            const details = document.createElement('small');
+            details.textContent = `${fmtBytes(file.size)}${tooLarge ? ' · over 10 MB' : ''}`;
+
+            item.append(name, details);
+            list.append(item);
+        }
     }
 }
 
@@ -3231,6 +3498,11 @@ document.addEventListener('click', (event) => {
         case 'editor-download-manifest': downloadEditorManifest(); break;
         case 'unban-user': unbanUser(Number(button.dataset.id)); break;
         case 'view-user': viewUser(Number(button.dataset.id)); break;
+        case 'view-report': viewReport(Number(button.dataset.id)); break;
+        case 'delete-report': deleteReport(Number(button.dataset.id)); break;
+        case 'save-report': saveReport(Number(button.dataset.id)); break;
+        case 'download-report-file': downloadReportFile(button); break;
+        case 'view-report-file': viewReportFile(button); break;
         case 'ban-user': banUser(button); break;
         case 'ban-quick': setBanExpiryFromNow(Number(button.dataset.hours) || 24); break;
         case 'confirm-ban': confirmBan(Number(button.dataset.id)); break;
@@ -3312,6 +3584,42 @@ document.getElementById('activity-next')?.addEventListener('click', () => {
     if (activityTotalPages > 0 && activityPage < activityTotalPages) {
         activityPage++;
         loadActivity();
+    }
+});
+
+// Crash reports: filters and paging.
+document.getElementById('reports-refresh-btn')?.addEventListener('click', () => loadReports());
+
+document.getElementById('reports-search')?.addEventListener('input', (e) => {
+    clearTimeout(reportsSearchTimer);
+    const value = e.target.value.trim();
+    reportsSearchTimer = setTimeout(() => {
+        reportsQuery = value;
+        loadReports(true);
+    }, 350);
+});
+
+document.getElementById('reports-status-filter')?.addEventListener('change', (e) => {
+    reportsStatus = e.target.value || '';
+    loadReports(true);
+});
+
+document.getElementById('reports-kind-filter')?.addEventListener('change', (e) => {
+    reportsKind = e.target.value || '';
+    loadReports(true);
+});
+
+document.getElementById('reports-prev')?.addEventListener('click', () => {
+    if (reportsPage > 1) {
+        reportsPage--;
+        loadReports();
+    }
+});
+
+document.getElementById('reports-next')?.addEventListener('click', () => {
+    if (reportsTotalPages > 0 && reportsPage < reportsTotalPages) {
+        reportsPage++;
+        loadReports();
     }
 });
 

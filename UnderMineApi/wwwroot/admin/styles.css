@@ -470,11 +470,18 @@ body {
     grid-template-columns: minmax(0, 1fr) 310px;
     gap: 16px;
     align-items: start;
+    margin-top: 16px;
+}
+
+/* Crash reports use the full content width, but keep the same gap below the stats
+   cards as the Activity layout. */
+.reports-table {
+    margin-top: 16px;
 }
 
 .activity-toolbar {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: center;
     gap: 10px;
     padding: 14px 16px;
@@ -482,7 +489,7 @@ body {
 }
 
 .activity-toolbar .search-bar {
-    flex: 1 1 260px;
+    grid-column: 1 / -1;
     margin-bottom: 0;
 }
 
@@ -491,6 +498,8 @@ body {
 }
 
 .activity-select {
+    width: 100%;
+    min-width: 0;
     background: var(--input);
     color: var(--text);
     border: 1px solid var(--line);
@@ -631,6 +640,14 @@ body {
 }
 
 @media (max-width: 700px) {
+    .activity-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .activity-toolbar .search-bar {
+        grid-column: auto;
+    }
+
     .activity-side {
         grid-template-columns: 1fr;
     }
@@ -2404,5 +2421,68 @@ input:checked + .slider:before {
 
     .file-size-cell {
         width: 88px;
+    }
+}
+
+/* ---------- crash reports ---------- */
+.report-meta {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin: 14px 0 6px;
+}
+
+.report-meta > div {
+    background: var(--section);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.report-meta span {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.report-meta strong {
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.report-files {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0 14px;
+}
+
+.report-files th,
+.report-files td {
+    padding: 7px 9px;
+    border-bottom: 1px solid var(--line-soft);
+    text-align: left;
+    font-size: 13px;
+    vertical-align: middle;
+}
+
+.report-files th {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+.report-files tr:last-child td {
+    border-bottom: none;
+}
+
+@media (max-width: 900px) {
+    .report-meta {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }

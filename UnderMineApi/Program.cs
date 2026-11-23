@@ -269,6 +269,7 @@ try
     builder.Services.AddScoped<EngineDownloadService>();
     builder.Services.AddScoped<S3StorageService>();
     builder.Services.AddScoped<BanEvidenceService>();
+    builder.Services.AddScoped<ClientReportService>();
     builder.Services.AddScoped<BuildManifestService>();
     builder.Services.AddScoped<BuildEditorService>();
     builder.Services.AddHttpClient<ModrinthService>();
@@ -313,6 +314,7 @@ try
     }
 
     builder.Services.AddHostedService<BuildLogRetentionService>();
+    builder.Services.AddHostedService<ClientReportRetentionService>();
 
     var app = builder.Build();
 

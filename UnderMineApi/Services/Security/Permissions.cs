@@ -32,6 +32,8 @@ public static class Permissions
     public const string UsersChangePassword = "users.change_password";
     public const string UsersChangeRole = "users.change_role";
     public const string ActivityView = "activity.view";
+    public const string ReportsView = "reports.view";
+    public const string ReportsManage = "reports.manage";
 
     /// <summary>
     /// Pseudo-policy for "can open the Users page". A role needs at least one of the user
@@ -55,7 +57,9 @@ public static class Permissions
         new PermissionDescriptor(UsersBan, "Ban users", "View the user list, ban and unban regular users."),
         new PermissionDescriptor(UsersChangePassword, "Change user passwords", "Reset the password of a regular user."),
         new PermissionDescriptor(UsersChangeRole, "Change user roles", "Change roles between user and moderator."),
-        new PermissionDescriptor(ActivityView, "View activity", "Read the administrative action log and its statistics.")
+        new PermissionDescriptor(ActivityView, "View activity", "Read the administrative action log and its statistics."),
+        new PermissionDescriptor(ReportsView, "View crash reports", "Read player crash reports and download their logs."),
+        new PermissionDescriptor(ReportsManage, "Manage crash reports", "Change report status, leave admin notes and delete reports.")
     };
 
     public static readonly IReadOnlySet<string> AllKeys =
@@ -74,6 +78,8 @@ public static class Permissions
         ServersEdit,
         BuildsUpload,
         PresetsCreate,
-        UsersBan
+        UsersBan,
+        ReportsView,
+        ReportsManage
     };
 }

@@ -24,6 +24,8 @@ namespace UnderMineApi.Data
         public DbSet<UnderMineApi.Domain.Entities.BuildLog> BuildLogs => Set<UnderMineApi.Domain.Entities.BuildLog>();
         public DbSet<UnderMineApi.Domain.Entities.BuildPreset> BuildPresets => Set<UnderMineApi.Domain.Entities.BuildPreset>();
         public DbSet<UnderMineApi.Domain.Entities.BuildPresetMod> BuildPresetMods => Set<UnderMineApi.Domain.Entities.BuildPresetMod>();
+        public DbSet<ClientReport> ClientReports => Set<ClientReport>();
+        public DbSet<ClientReportFile> ClientReportFiles => Set<ClientReportFile>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -192,6 +194,51 @@ namespace UnderMineApi.Data
                 entity.Property(e => e.CustomFileName).HasMaxLength(500);
                 entity.Property(e => e.CustomFileS3Key).HasMaxLength(500);
                 entity.Property(e => e.Sha256Hash).HasMaxLength(100);
+            });
+
+            modelBuilder.Entity<ClientReport>(entity =>
+            {
+                entity.ToTable("client_reports");
+                entity.Property(e => e.Kind).HasMaxLength(20);
+                entity.Property(e => e.Status).HasMaxLength(20);
+                entity.Property(e => e.DeviceId).HasMaxLength(128);
+                entity.Property(e => e.Title).HasMaxLength(200);
+                entity.Property(e => e.Summary).HasMaxLength(4000);
+                entity.Property(e => e.AdminNote).HasMaxLength(4000);
+                entity.Property(e => e.LauncherVersion).HasMaxLength(64);
+                entity.Property(e => e.MinecraftVersion).HasMaxLength(64);
+                entity.Property(e => e.Loader).HasMaxLength(64);
+                entity.Property(e => e.ServerName).HasMaxLength(100);
+                entity.Property(e => e.Os).HasMaxLength(200);
+                entity.Property(e => e.ConsentVersion).HasMaxLength(32);
+                entity.Property(e => e.ResolvedBy).HasMaxLength(100);
+                entity.Property(e => e.Ip).HasMaxLength(64);
+
+                // Admin list: newest first with optional status/kind/user filters.
+                entity.HasIndex(e => e.CreatedAt);
+                entity.HasIndex(e => new { e.Status, e.CreatedAt });
+                entity.HasIndex(e => e.UserId);
+                entity.HasIndex(e => e.DeviceId);
+
+                entity.HasOne(e => e.User)
+                      .WithMany()
+                      .HasForeignKey(e => e.UserId)
+                      .OnDelete(DeleteBehavior.SetNull);
+
+                entity.HasMany(e => e.Files)
+                      .WithOne(f => f.Report)
+                      .HasForeignKey(f => f.ReportId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ClientReportFile>(entity =>
+            {
+                entity.ToTable("client_report_files");
+                entity.Property(e => e.Kind).HasMaxLength(32);
+                entity.Property(e => e.FileName).HasMaxLength(255);
+                entity.Property(e => e.ContentType).HasMaxLength(100);
+                entity.Property(e => e.Sha256).HasMaxLength(64);
+                entity.HasIndex(e => e.ReportId);
             });
         }
     }
