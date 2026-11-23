@@ -111,6 +111,10 @@ services:
       RateLimiting__Auth__WindowSeconds: "${RateLimiting__Auth__WindowSeconds:-60}"
       RateLimiting__Register__PermitLimit: "${RateLimiting__Register__PermitLimit:-10}"
       RateLimiting__Register__WindowSeconds: "${RateLimiting__Register__WindowSeconds:-600}"
+      RateLimiting__Reports__PermitLimit: "${RateLimiting__Reports__PermitLimit:-10}"
+      RateLimiting__Reports__WindowSeconds: "${RateLimiting__Reports__WindowSeconds:-600}"
+      Reports__RetentionDays: "${Reports__RetentionDays:-90}"
+      Reports__RetentionIntervalHours: "${Reports__RetentionIntervalHours:-24}"
       RateLimiting__Static__PermitLimit: "${RateLimiting__Static__PermitLimit:-1000}"
       RateLimiting__Static__WindowSeconds: "${RateLimiting__Static__WindowSeconds:-10}"
       ConnectionStrings__PostgreConnection: Host=${POSTGRES_HOST:-};Port=${POSTGRES_PORT:-};Database=${POSTGRES_DB:-};Username=${POSTGRES_USER:-};Password=${POSTGRES_PASSWORD:-}

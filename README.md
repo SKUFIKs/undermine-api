@@ -35,6 +35,7 @@
 - [Docker](#docker)
 - [CI/CD](#cicd)
 - [Разработка](#разработка)
+- [Тесты](#тесты)
 - [Известные ограничения](#известные-ограничения)
 
 ---
@@ -79,6 +80,9 @@
   дату и время окончания, быстрые пресеты и постоянную блокировку. Доказательства
   хранятся в PostgreSQL и доступны только через авторизованный API.
 - История банов с причинами, сроками и вложениями показывается в статистике пользователя.
+- **Reports** — краш-репорты лаунчера и Minecraft: фильтры по игроку/устройству/статусу,
+  просмотр метаданных, скачивание логов, статусы (`new` / `investigating` / `resolved`)
+  и заметки администратора. Отчёт принимается только с согласия игрока.
 - **Activity** — журнал действий администраторов: фильтры по администратору, действию,
   периоду и тексту, пагинация, сводка и топ действий/администраторов.
 - Режим технических работ с блокировкой публичного API.
@@ -371,6 +375,9 @@ BootstrapAdminPassword=CHANGE_ME_MIN_8_CHARS
 | `RateLimiting__Admin__PermitLimit` / `WindowSeconds` | Админка и poll-запросы | `600` / `60` |
 | `RateLimiting__Auth__PermitLimit` / `WindowSeconds` | Login и validate-token | `20` / `60` |
 | `RateLimiting__Register__PermitLimit` / `WindowSeconds` | Создание аккаунта | `10` / `600` |
+| `RateLimiting__Reports__PermitLimit` / `WindowSeconds` | Загрузка краш-репортов | `10` / `600` |
+| `Reports__RetentionDays` | Хранить краш-репорты N дней (`0` — не удалять) | `90` |
+| `Reports__RetentionIntervalHours` | Интервал фоновой очистки отчётов | `24` |
 | `RateLimiting__Static__PermitLimit` / `WindowSeconds` | Статика и `/health` | `1000` / `10` |
 
 ### Прочее
@@ -562,6 +569,8 @@ apiundermine/
 | `users.change_password` | Сброс пароля пользователя | нет |
 | `users.change_role` | Смена роли пользователя | нет |
 | `activity.view` | Журнал Activity | нет |
+| `reports.view` | Просмотр краш-репортов и скачивание логов | да |
+| `reports.manage` | Смена статуса/заметки и удаление отчётов | да |
 
 Дополнительно:
 
@@ -587,6 +596,7 @@ apiundermine/
 | `auth` | `login`, `validate-token` | 20 / 60 с | подсеть |
 | `register` | `POST /register` | 10 / 600 с | подсеть |
 | `static` | статика админки, `/health` и прочее вне `/api` | 1000 / 10 с | общий ключ |
+| `reports` | загрузка краш-репортов (`POST /api/v1.0/reports`) | 10 / 600 с | user id, иначе подсеть |
 
 При превышении — **HTTP 429**, заголовок `Retry-After` и JSON:
 
@@ -695,6 +705,31 @@ maintenance + глобальный обработчик):
 { "realName": "Player", "uuid": "…", "role": "user",
   "statistics": { "playTime": 0, "murders": 0, "deaths": 0 } }
 ```
+
+### Краш-репорты лаунчера
+
+Лаунчер отправляет отчёт только после явного согласия игрока (чекбокс в окне ошибки).
+Отчёт привязан к аккаунту, если запрос авторизован; иначе — к `deviceId`
+(например, краш на экране входа).
+
+| Метод | Путь | Доступ | Описание |
+|---|---|---|---|
+| `POST` | `/api/v1.0/reports` | анонимно / авторизован | Загрузка отчёта (`multipart/form-data`) |
+| `GET` | `/api/v1.0/admin/reports` | `reports.view` | Список с фильтрами и пагинацией |
+| `GET` | `/api/v1.0/admin/reports/{id}` | `reports.view` | Детали и список файлов |
+| `GET` | `/api/v1.0/admin/reports/{id}/files/{fileId}` | `reports.view` | Скачать вложение |
+| `PATCH` | `/api/v1.0/admin/reports/{id}` | `reports.manage` | Статус и заметка администратора |
+| `DELETE` | `/api/v1.0/admin/reports/{id}` | `reports.manage` | Удалить отчёт |
+| `GET` | `/api/v1.0/admin/reports/stats` | `reports.view` | Счётчики для админки |
+
+Поля формы: `kind` (`launcher` / `minecraft`), `title`, `summary`, `launcherVersion`,
+`minecraftVersion`, `loader`, `serverName`, `os`, `deviceId`, `consent` (обязательно `true`),
+`consentVersion`, и файлы `launcherLog`, `minecraftDebug`, `minecraftCrash`, `minecraftLatest`.
+
+Ограничения: только `.log`/`.txt`, до 10 МБ на файл, до 30 МБ суммарно, не более 4 файлов.
+Для `launcher` обязателен `launcherLog`; для `minecraft` — `launcherLog` и хотя бы один
+Minecraft-файл. Файлы хранятся в PostgreSQL и доступны только через админский эндпоинт.
+Перед отправкой лаунчер вырезает из текста JWT, `--accessToken`, `Bearer`-токены и пароли.
 
 ### Серверы
 
@@ -1604,6 +1639,28 @@ Ansible-деплой запускается из GitHub Environments `staging` �
 | `UnderMineApi.Tests` | xUnit-тесты (unit/harness) |
 
 Проверка изменений:
+
+### Тесты
+
+Полный прогон одной командой (restore → build → test, выход с ошибкой при первом сбое):
+
+```powershell
+# Windows / PowerShell
+.\run-tests.ps1
+.\run-tests.ps1 -Configuration Release
+.\run-tests.ps1 -Filter "FullyQualifiedName~ClientReport"
+```
+
+```bash
+# Linux / macOS / CI (нужен .NET 9 SDK)
+./run-tests.sh
+./run-tests.sh Release
+./run-tests.sh Debug "FullyQualifiedName~ClientReport"
+```
+
+`-NoRestore` / `NO_RESTORE=1` пропускает `dotnet restore`, если пакеты уже восстановлены.
+
+Ручной вариант:
 
 ```bash
 dotnet build UnderMineApi.sln

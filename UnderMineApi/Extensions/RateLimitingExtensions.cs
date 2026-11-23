@@ -22,6 +22,7 @@ public static class RateLimitingExtensions
     public const string AdminPolicy = "admin";
     public const string AuthPolicy = "auth";
     public const string RegisterPolicy = "register";
+    public const string ReportsPolicy = "reports";
 
     public static IServiceCollection AddConfiguredRateLimiting(
         this IServiceCollection services,
@@ -46,6 +47,11 @@ public static class RateLimitingExtensions
 
         var staticPermit = Math.Max(1, configuration.GetValue("RateLimiting:Static:PermitLimit", 1000));
         var staticWindow = Seconds(configuration.GetValue("RateLimiting:Static:WindowSeconds", 10));
+
+        // Crash-report uploads are rare but can carry up to 30 MB. Keep the anonymous budget
+        // small; authenticated users get their own bucket through the user-id partition.
+        var reportsPermit = Math.Max(1, configuration.GetValue("RateLimiting:Reports:PermitLimit", 10));
+        var reportsWindow = Seconds(configuration.GetValue("RateLimiting:Reports:WindowSeconds", 600));
 
         var ipv4Prefix = Math.Clamp(configuration.GetValue("Registration:Ipv4PrefixLength", 32), 1, 32);
         var ipv6Prefix = Math.Clamp(configuration.GetValue("Registration:Ipv6PrefixLength", 64), 1, 128);
@@ -96,6 +102,11 @@ public static class RateLimitingExtensions
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: PartitionKey(httpContext, ipv4Prefix, ipv6Prefix, preferUser: false),
                     factory: _ => FixedWindow(registerPermit, registerWindow)));
+
+            options.AddPolicy(ReportsPolicy, httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: PartitionKey(httpContext, ipv4Prefix, ipv6Prefix, preferUser: true),
+                    factory: _ => FixedWindow(reportsPermit, reportsWindow)));
 
             options.OnRejected = async (context, token) =>
             {
