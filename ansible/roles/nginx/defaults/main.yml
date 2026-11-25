@@ -21,3 +21,9 @@ staging_basic_auth_file: /etc/nginx/.htpasswd-staging
 staging_ip_allowlist: []
 # Staging bucket served under /builds/ by the staging vhost.
 garage_staging_bucket: undermine-staging-builds
+
+# Source addresses allowed to scrape /metrics through nginx. Prometheus runs on
+# the monitoring host (prod-2-de); the private range covers same-host/Docker probes.
+api_metrics_allowed_ips:
+  - 150.241.68.236/32
+  - 172.16.0.0/12

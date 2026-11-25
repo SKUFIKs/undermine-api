@@ -69,6 +69,24 @@ server {
         proxy_pass http://api_backend;
     }
 
+    # Prometheus scrape endpoint. Restrict by source IP here and optionally add
+    # Metrics__Token on the API for a second layer.
+    location = /metrics {
+{% if api_metrics_allowed_ips | default([]) | length > 0 %}
+{% for cidr in api_metrics_allowed_ips %}
+        allow {{ cidr }};
+{% endfor %}
+        deny all;
+{% endif %}
+        proxy_pass http://api_backend;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_buffering off;
+    }
+
     location /admin/ {
         proxy_pass http://api_backend;
     }

@@ -1458,20 +1458,39 @@ Authorization: Bearer <token>
 X-Metrics-Token: <token>
 ```
 
-Без токена `/metrics` открыт всем, кто может достучаться до порта API. Рекомендуется задать
-токен и/или ограничить доступ на уровне nginx/сети.
+Без токена доступ к `/metrics` ограничивается на уровне nginx: в production vhost разрешены
+только адреса из `api_metrics_allowed_ips` (мониторинговый хост `150.241.68.236/32` и
+локальный Docker-диапазон). Токен — дополнительный слой защиты.
 
 ### Как scrape-ить
 
-В одном Docker Compose с API:
+Production и staging метрики отдаются на тех же доменах, отдельный поддомен не нужен:
 
 ```yaml
 scrape_configs:
   - job_name: undermine-api
+    scheme: https
     metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/undermine_metrics_token
+    static_configs:
+      - targets: ["api.undermine.click"]
+        labels:
+          instance: "prod-1-se"
+          environment: "production"
+          service: "undermine-api"
+      - targets: ["staging.undermine.click"]
+        labels:
+          instance: "staging-1"
+          environment: "staging"
+          service: "undermine-api"
+```
+
+Этот job уже описан в `prometheus-grafana-lab/ansible` (`prometheus_api_targets` в
+`group_vars/all/main.yml`). Если на API включён `Metrics__Token`, раскомментируйте/заполните
+`prometheus_api_metrics_token` — шаблон Prometheus добавит `authorization` автоматически.
+
+В одном Docker Compose без nginx API доступен напрямую:
+
+```yaml
     static_configs:
       - targets: ["api:8080"]
 ```
@@ -1483,17 +1502,15 @@ scrape_configs:
       - targets: ["127.0.0.1:5000"]
 ```
 
-В production Prometheus обычно ходит напрямую на внутренний адрес API. Публичный nginx
-из этого репозитория не проксирует `/metrics` (запрос уйдёт в MinIO); если нужен доступ
-через nginx, добавьте отдельный `location = /metrics` с `proxy_pass` на API **и обязательно
-включите `Metrics__Token`**.
-
 Проверка вручную:
 
 ```bash
-curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:5000/metrics
+curl -H "Authorization: Bearer $METRICS_TOKEN" https://api.undermine.click/metrics
 curl -H "X-Metrics-Token: $METRICS_TOKEN" http://localhost:5000/metrics
 ```
+
+Nginx-конфиги API уже содержат `location = /metrics` для production и staging vhosts.
+Локальный `nginx.conf` также проксирует `/metrics` на API.
 
 ### HTTP и runtime-метрики
 

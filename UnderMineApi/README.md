@@ -184,7 +184,8 @@ services:
 - Metrics
   - `GET /metrics` — Prometheus-метрики (HTTP, process, .NET runtime, бизнес-метрики).
     Если задан `Metrics__Token`, требуется `Authorization: Bearer <token>` или
-    `X-Metrics-Token: <token>`.
+    `X-Metrics-Token: <token>`. В production/staging vhost nginx есть `location = /metrics`
+    с IP allowlist мониторингового хоста.
 
 ## Примеры curl
 
