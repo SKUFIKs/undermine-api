@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
+using Prometheus;
+using Prometheus.DotNetRuntime;
 using Serilog;
 using Serilog.Events;
 using StackExchange.Redis;
@@ -15,6 +17,7 @@ using UnderMineApi.Data;
 using UnderMineApi.Extensions;
 using UnderMineApi.HealthChecks;
 using UnderMineApi.Middleware;
+using UnderMineApi.Metrics;
 using UnderMineApi.Options;
 using UnderMineApi.Services;
 using UnderMineApi.Services.Interfaces;
@@ -45,8 +48,22 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    var metricsEnabled = builder.Configuration.GetValue("Metrics:Enabled", true);
+    var runtimeMetricsEnabled = builder.Configuration.GetValue("Metrics:RuntimeEnabled", true);
+
     builder.Services.AddSerilog();
     builder.Services.AddValidatedStartupOptions(builder.Configuration);
+
+    if (metricsEnabled)
+    {
+        if (runtimeMetricsEnabled)
+        {
+            // .NET runtime, GC, thread-pool, JIT, contention and exception metrics.
+            DotNetRuntimeStatsBuilder.Default().StartCollecting();
+        }
+
+        builder.Services.AddHostedService<MetricsSnapshotService>();
+    }
 
     System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -310,6 +327,7 @@ try
     }
     else
     {
+        AppMetrics.SetBuildWorkerState(false);
         Log.Information("Build worker is disabled (Build:WorkerEnabled=false).");
     }
 
@@ -380,7 +398,6 @@ try
     app.UseSerilogRequestLogging();
     app.UseMiddleware<UnderMineApi.Middleware.RequestLoggingMiddleware>();
     app.UseMiddleware<SecurityHeadersMiddleware>();
-    app.UseExceptionHandler();
 
     // /health/live  - process liveness only (no external dependencies)
     // /health/ready - readiness: PostgreSQL is reachable
@@ -407,6 +424,20 @@ try
     // AccountBanMiddleware below.
     app.UseRouting();
 
+    if (metricsEnabled)
+    {
+        // Must run after routing to capture controller/action/route labels. The exception
+        // handler is registered below (after metrics) so the exported status code is final.
+        app.UseHttpMetrics(options =>
+        {
+            options.AddRouteParameter("version");
+        });
+
+        app.UseMiddleware<MetricsAccessMiddleware>();
+    }
+
+    app.UseExceptionHandler();
+
     // Same-origin production deployments do not need the CORS middleware at all.
     if (CorsExtensions.IsCorsEnabled(builder.Configuration, builder.Environment))
         app.UseCors(CorsExtensions.PolicyName);
@@ -430,6 +461,9 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
+
+    if (metricsEnabled)
+        app.MapMetrics("/metrics");
 
     // UseDefaultFiles must run before UseStaticFiles, otherwise a request for a
     // directory (e.g. /admin/) is never rewritten to its index.html and returns 404.

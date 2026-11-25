@@ -1,6 +1,7 @@
 using UnderMineApi.Data;
 using UnderMineApi.Models;
 using UnderMineApi.Extensions;
+using UnderMineApi.Metrics;
 using Microsoft.AspNetCore.Http;
 
 namespace UnderMineApi.Services
@@ -34,6 +35,7 @@ namespace UnderMineApi.Services
 
                 _context.AdminAudits.Add(audit);
                 await _context.SaveChangesAsync(cancellationToken);
+                AppMetrics.AdminAction(action);
             }
             catch (Exception ex)
             {

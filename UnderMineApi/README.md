@@ -15,6 +15,8 @@ API для управления пользователями/аккаунтам�
 - `AdminBuildEditorController` — файловый редактор сборок.
 - `ConfigCacheService` — in-memory кеш конфигурации серверов с возможностью синхронизации через Redis и механизма pub/sub.
 - `PermissionService` — права ролей `moderator`/`user`; роль `admin` неявно имеет все права.
+- `MetricsSnapshotService` — обновляет Prometheus gauges из PostgreSQL/S3/Redis.
+- `AppMetrics` — определения HTTP/бизнес-метрик, счётчиков и гистограмм.
 - EF Core (PostgreSQL) — автоматическое применение миграций: `UserAccount`, `UserData`, `UserIpHistory`, `RolePermission`, `UserBanEvidence`, `ServerManifest`, `ServerConfigDetails`, `UserBans`, `AdminAudit`, `GlobalSetting`.
 
 ## Основные технологии
@@ -28,6 +30,8 @@ API для управления пользователями/аккаунтам�
   и сводкой.
 - Permission-политики для админ-эндпоинтов: `servers.view/create/edit`, `builds.upload`,
   `presets.create`, `users.ban/change_password/change_role`, `activity.view`.
+- Prometheus-метрики на `/metrics`: HTTP, process, .NET runtime и бизнес-метрики.
+  Защищаются необязательным `Metrics__Token`.
 
 ## Зависимости
 
@@ -176,6 +180,12 @@ services:
   `activity.view`.
   Роль `admin` имеет все права неявно; для `moderator` при миграции заводятся
   права по умолчанию (всё, кроме смены паролей, смены ролей и журнала Activity).
+
+- Metrics
+  - `GET /metrics` — Prometheus-метрики (HTTP, process, .NET runtime, бизнес-метрики).
+    Если задан `Metrics__Token`, требуется `Authorization: Bearer <token>` или
+    `X-Metrics-Token: <token>`. В production/staging vhost nginx есть `location = /metrics`
+    с IP allowlist мониторингового хоста.
 
 ## Примеры curl
 

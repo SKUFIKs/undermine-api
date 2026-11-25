@@ -4,6 +4,7 @@ using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Models;
 using UnderMineApi.Services.Interfaces;
+using UnderMineApi.Metrics;
 using UnderMineApi.Services.PasswordHasher;
 using UnderMineApi.Services.Security;
 
@@ -518,6 +519,9 @@ namespace UnderMineApi.Services
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
+            AppMetrics.Ban("ban");
+            AppMetrics.BanEvidence(evidence.Count, evidence.Sum(file => file.Size));
+
             _access.Invalidate(id);
 
             var expiryText = request.ExpiresAt.HasValue
@@ -544,6 +548,7 @@ namespace UnderMineApi.Services
             foreach (var ban in activeBans) ban.IsActive = false;
             await _context.SaveChangesAsync(cancellationToken);
 
+            AppMetrics.Ban("unban");
             _access.Invalidate(id);
 
             _logger.LogInformation("User {UserId} unbanned by {Actor}", id, actor);

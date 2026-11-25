@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ using UnderMineApi.Data;
 using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Services.Interfaces;
+using UnderMineApi.Metrics;
 
 namespace UnderMineApi.Services
 {
@@ -44,12 +46,15 @@ namespace UnderMineApi.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            AppMetrics.SetBuildWorkerState(true);
+
             await RecoverInterruptedBuildsAsync(stoppingToken);
             await CleanupOrphanModpackStagingAsync(stoppingToken);
             _nextRecoveryUtc = DateTime.UtcNow.AddSeconds(30);
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                AppMetrics.SetBuildWorkerHeartbeat();
                 try
                 {
                     var processed = await ProcessNextBuildAsync(stoppingToken);
@@ -88,6 +93,8 @@ namespace UnderMineApi.Services
                     break;
                 }
             }
+
+            AppMetrics.SetBuildWorkerState(false);
         }
 
         /// <summary>
@@ -190,6 +197,11 @@ namespace UnderMineApi.Services
                     build.Status = "pending";
                     build.UpdatedAt = DateTime.UtcNow;
                     await context.SaveChangesAsync(ct);
+
+                    var type = ModpackImportInfo.Parse(build.ModpackImport) != null
+                        ? "modpack"
+                        : "standard";
+                    AppMetrics.BuildEvent("recovered", type);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -233,6 +245,12 @@ namespace UnderMineApi.Services
                 failed.Status = "pending";
                 failed.UpdatedAt = DateTime.UtcNow;
                 await context.SaveChangesAsync(ct);
+
+                var type = ModpackImportInfo.Parse(failed.ModpackImport) != null
+                    ? "modpack"
+                    : "standard";
+                AppMetrics.Retry(type);
+
                 break; // one retry per cycle keeps the queue fair
             }
         }
@@ -297,6 +315,8 @@ namespace UnderMineApi.Services
             // the standard engine + preset pipeline.
             var importInfo = ModpackImportInfo.Parse(build.ModpackImport);
             var buildType = importInfo != null ? BuildType.ModpackImport : BuildType.Standard;
+            var buildTypeLabel = buildType == BuildType.ModpackImport ? "modpack" : "standard";
+            var buildStopwatch = Stopwatch.StartNew();
 
             // `build` is tracked by `context`, so every status change below must be saved
             // with this same context instance - saving through another scope silently does nothing.
@@ -305,6 +325,8 @@ namespace UnderMineApi.Services
                 build.Status = "downloading";
                 build.UpdatedAt = DateTime.UtcNow;
                 await context.SaveChangesAsync(ct);
+
+                AppMetrics.BuildStarted(buildTypeLabel);
 
                 await progress.LogAsync(
                     "info",
@@ -353,6 +375,10 @@ namespace UnderMineApi.Services
                 await progress.LogAsync("info", "Сборка завершена", ct);
                 await progress.CompleteAsync(ct);
 
+                AppMetrics.BuildFinished(
+                    buildTypeLabel, "completed", buildStopwatch.Elapsed,
+                    build.TotalFiles, build.TotalBytes);
+
                 _logger.LogInformation("Build {BuildId}: completed!", build.BuildId);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -363,11 +389,16 @@ namespace UnderMineApi.Services
                 build.UpdatedAt = DateTime.UtcNow;
                 await context.SaveChangesAsync(CancellationToken.None);
 
+                AppMetrics.BuildEvent("interrupted", buildTypeLabel);
                 _logger.LogWarning("Build {BuildId} interrupted by shutdown, re-queued as pending", build.BuildId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Build {BuildId} failed", build.BuildId);
+
+                AppMetrics.BuildFinished(
+                    buildTypeLabel, "failed", buildStopwatch.Elapsed,
+                    build.TotalFiles, build.TotalBytes);
 
                 var attempts = ParseAttemptCount(build.ErrorMessage) + 1;
 
