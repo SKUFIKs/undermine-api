@@ -13,6 +13,7 @@ using UnderMineApi.Domain.Entities;
 using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Services;
+using UnderMineApi.Metrics;
 using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers
@@ -107,6 +108,8 @@ namespace UnderMineApi.Controllers
             await _audit.LogAsync(
                 actor, "create_build", "build", build.Id,
                 $"{build.Name} ({build.McVersion}, {build.LoaderType})", ct);
+
+            AppMetrics.BuildEvent("created", "standard");
 
             return Ok(new BuildResponse
             {
@@ -410,6 +413,9 @@ namespace UnderMineApi.Controllers
             _logger.LogInformation("Build {BuildId} deleted by {Actor} ({FileCount} files)", build.BuildId, actor, s3Keys.Count);
 
             await _audit.LogAsync(actor, "delete_build", "build", id, build.BuildId, ct);
+
+            var buildType = ModpackImportInfo.Parse(build.ModpackImport) != null ? "modpack" : "standard";
+            AppMetrics.BuildEvent("deleted", buildType);
 
             return Ok(new { Message = "Build deleted", FileCount = s3Keys.Count });
         }

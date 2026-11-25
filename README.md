@@ -30,6 +30,7 @@
 - [Админ-панель](#админ-панель)
 - [База данных](#база-данных)
 - [Логирование](#логирование)
+- [Метрики Prometheus](#метрики-prometheus)
 - [Безопасность](#безопасность)
 - [Миграции](#миграции)
 - [Docker](#docker)
@@ -141,6 +142,7 @@ MinIO → сохраняет `manifest_json` и переводит статус 
 | Аутентификация | **JWT Bearer** (HS256), BCrypt.Net-Next |
 | Кеш | **Redis** (опционально, StackExchange.Redis) |
 | Логирование | **Serilog** (консоль + файл) |
+| Мониторинг | **prometheus-net** (HTTP, process, .NET runtime) + бизнес-метрики `/metrics` |
 | Версионирование API | `Asp.Versioning.Mvc` |
 | Конфигурация | `DotNetEnv` (`.env`) + переменные окружения |
 | Health checks | `AspNetCore.HealthChecks.NpgSql` |
@@ -446,6 +448,8 @@ apiundermine/
 │   │   ├── ConfigCacheService.cs          # кеш серверов и флага maintenance
 │   │   ├── ConfigUpdateService.cs         # фоновое обновление кеша
 │   │   ├── AdminAuditService.cs           # аудит действий и лента Activity
+│   │   ├── MetricsSnapshotService.cs      # gauges из БД/S3/Redis для Prometheus
+│   │   ├── Metrics/AppMetrics.cs          # определения counter/histogram/gauge
 │   │   ├── GetUuid.cs                     # offline-UUID по логину
 │   │   ├── PasswordHasher/                # BCrypt
 │   │   │
@@ -467,6 +471,7 @@ apiundermine/
 │   │   ├── RequestLoggingMiddleware.cs    # request id, логирование запросов
 │   │   ├── GlobalExceptionHandler.cs      # единый формат ошибок 500
 │   │   ├── AccountBanMiddleware.cs        # бан/роль/token_version на каждом запросе
+│   │   ├── MetricsAccessMiddleware.cs     # опциональный токен для /metrics
 │   │   ├── SecurityHeadersMiddleware.cs   # CSP, HSTS, frame/nosniff
 │   │   └── ApiLockMiddleware.cs           # блокировка API при maintenance
 │   │
@@ -1018,6 +1023,7 @@ curl -X POST http://localhost:8080/api/v1.0/admin/users/42/ban \
 | `ConfigCacheService` | Кеш активных серверов и флага maintenance (+ зеркало в Redis) |
 | `ConfigUpdateService` | Фоновое обновление кеша раз в минуту и рассылка в Redis |
 | `AdminAuditService` | Запись действий админов; лента для Activity; ошибки аудита не ломают запрос |
+| `MetricsSnapshotService` | Обновляет Prometheus gauges из PostgreSQL/S3/Redis раз в N секунд |
 | `VersionCatalogService` | Версии Minecraft и загрузчиков из Mojang/Fabric/Forge/NeoForge |
 | `BuildWorkerService` | Фоновая очередь сборок, статусы, ретраи, восстановление зависших сборок |
 | `BuildLockService` | Межпроцессная блокировка сборки (PostgreSQL advisory lock) |
@@ -1430,6 +1436,151 @@ Logging__LogLevel__Microsoft.AspNetCore=Warning
 
 ---
 
+## Метрики Prometheus
+
+API экспортирует метрики на `GET /metrics` через `prometheus-net.AspNetCore` и
+`prometheus-net.DotNetRuntime`. Помимо HTTP/runtime/process-метрик собираются бизнес-метрики
+пользователей, банов, сборок, действий администраторов и состояния БД/хранилища.
+
+### Конфигурация и защита
+
+| Параметр | Описание | По умолчанию |
+|---|---|---|
+| `Metrics__Enabled` | Включить `/metrics`, snapshot-сервис и регистрацию метрик | `true` |
+| `Metrics__Token` | Необязательный bearer-токен для `/metrics` | пусто |
+| `Metrics__RuntimeEnabled` | Собирать .NET runtime/GC/threadpool/JIT-метрики | `true` |
+| `Metrics__SnapshotIntervalSeconds` | Интервал обновления gauges из PostgreSQL/хранилища | `30` |
+
+Если `Metrics__Token` задан, Prometheus должен отправлять его одним из способов:
+
+```http
+Authorization: Bearer <token>
+X-Metrics-Token: <token>
+```
+
+Без токена `/metrics` открыт всем, кто может достучаться до порта API. Рекомендуется задать
+токен и/или ограничить доступ на уровне nginx/сети.
+
+### Как scrape-ить
+
+В одном Docker Compose с API:
+
+```yaml
+scrape_configs:
+  - job_name: undermine-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/undermine_metrics_token
+    static_configs:
+      - targets: ["api:8080"]
+```
+
+С хоста API доступен на loopback-порту `5000`:
+
+```yaml
+    static_configs:
+      - targets: ["127.0.0.1:5000"]
+```
+
+В production Prometheus обычно ходит напрямую на внутренний адрес API. Публичный nginx
+из этого репозитория не проксирует `/metrics` (запрос уйдёт в MinIO); если нужен доступ
+через nginx, добавьте отдельный `location = /metrics` с `proxy_pass` на API **и обязательно
+включите `Metrics__Token`**.
+
+Проверка вручную:
+
+```bash
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:5000/metrics
+curl -H "X-Metrics-Token: $METRICS_TOKEN" http://localhost:5000/metrics
+```
+
+### HTTP и runtime-метрики
+
+| Метрика | Что показывает |
+|---|---|
+| `http_requests_received_total{code,method,controller,action,version,endpoint}` | Все HTTP-запросы с кодом ответа и endpoint |
+| `http_requests_in_progress{...}` | Запросы, выполняющиеся прямо сейчас |
+| `http_request_duration_seconds` | Гистограмма длительности запросов |
+| `process_cpu_seconds_total`, `process_working_set_bytes`, `process_private_memory_bytes` | CPU, память, старт процесса |
+| `dotnet_gc_*`, `dotnet_threadpool_*`, `dotnet_jit_*`, `dotnet_contention_total` | GC, thread pool, JIT, contention |
+| `dotnet_exceptions_total` | Исключения .NET (если включён runtime collector) |
+
+Лейблы `controller`, `action` и `version` заполняются для MVC-эндпоинтов; для статики и
+health-проверок `endpoint` содержит путь. `code` — точный HTTP-код (не сгруппированный).
+
+### Бизнес-метрики
+
+| Метрика | Тип | Описание |
+|---|---|---|
+| `undermine_auth_login_total{result}` | counter | Вход: `success`, `invalid_credentials`, `invalid_request`, `banned`, `error` |
+| `undermine_auth_registration_total{result}` | counter | Регистрация: `success`, `username_taken`, `device_limit`, `ip_limit`, `weak_password`, `invalid_device`, `invalid_request`, `error` |
+| `undermine_auth_token_validation_total{result}` | counter | Проверка токена: `valid`, `invalid`, `banned`, `role_changed`, `token_revoked`, `user_not_found` |
+| `undermine_user_bans_total{action}` | counter | `ban` / `unban` |
+| `undermine_ban_evidence_uploaded_total` | counter | Загруженные файлы доказательств |
+| `undermine_ban_evidence_uploaded_bytes_total` | counter | Размер загруженных доказательств |
+| `undermine_admin_actions_total{action}` | counter | Аудированные действия администраторов (`ban_user`, `update_server`, `import_modpack`, …) |
+| `undermine_build_events_total{event,type}` | counter | `created`, `started`, `completed`, `failed`, `retried`, `recovered`, `interrupted`, `deleted`; `type` = `standard` / `modpack` |
+| `undermine_build_duration_seconds{type,result}` | histogram | Время сборки до `completed`/`failed` |
+| `undermine_build_files{type}` | histogram | Количество файлов в завершённой сборке |
+| `undermine_build_size_bytes{type}` | histogram | Размер завершённой сборки |
+
+### Текущее состояние (gauges)
+
+| Метрика | Описание |
+|---|---|
+| `undermine_users{role}` | Аккаунты по ролям (`admin`, `moderator`, `user`) |
+| `undermine_users_banned` | Уникальные пользователи с активным баном |
+| `undermine_users_active_24h` | Успешные входы за 24 часа |
+| `undermine_registrations_24h` | Регистрации за 24 часа |
+| `undermine_servers{status}` | Серверы `active` / `inactive` |
+| `undermine_builds{status}` | Сборки по статусам |
+| `undermine_build_queue_length` | Сборки в `pending` |
+| `undermine_builds_in_progress` | Сборки в `downloading` + `hashing` |
+| `undermine_presets` | Количество пресетов |
+| `undermine_build_files_total` / `undermine_build_bytes_total` | Файлы и суммарный размер сборок в БД |
+| `undermine_ban_evidence_files` / `undermine_ban_evidence_bytes` | Доказательства банов в PostgreSQL |
+| `undermine_admin_audit_rows` | Всего записей аудита |
+| `undermine_role_permissions{role}` | Количество прав у роли |
+| `undermine_maintenance_mode` | `1`, если включён maintenance mode |
+| `undermine_database_up` | `1`, если последний snapshot PostgreSQL успешен |
+| `undermine_storage_up` | `1`, если S3/MinIO health probe успешен |
+| `undermine_redis_up` | `1`, если Redis подключён (при наличии) |
+| `undermine_build_worker_up` | `1`, пока background build worker запущен |
+| `undermine_build_worker_last_iteration_timestamp_seconds` | Unix-время последнего цикла worker |
+
+### Примеры запросов для Grafana
+
+```promql
+# RPS
+sum(rate(http_requests_received_total[5m]))
+
+# Доля 5xx
+sum(rate(http_requests_received_total{code=~"5.."}[5m]))
+  / clamp_min(sum(rate(http_requests_received_total[5m])), 0.001)
+
+# p95 latency
+histogram_quantile(0.95,
+  sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+
+# Активные баны и очередь сборок
+undermine_users_banned
+undermine_build_queue_length
+undermine_builds{status="failed"}
+
+# Успешные сборки за час
+sum(increase(undermine_build_events_total{event="completed"}[1h]))
+
+# Ошибки авторизации
+sum by (result) (rate(undermine_auth_login_total{result!="success"}[5m]))
+```
+
+Метрики snapshot обновляются раз в `Metrics__SnapshotIntervalSeconds`; счётчики
+увеличиваются сразу при событии. После рестарта API счётчики начинаются с нуля — для графиков
+используйте `rate()`/`increase()`, а абсолютные значения берите из gauges.
+
+---
+
 ## Безопасность
 
 | Мера | Реализация |
@@ -1443,6 +1594,7 @@ Logging__LogLevel__Microsoft.AspNetCore=Warning
 | Иерархия ролей | Неадминистратор не может управлять ролью выше своей, назначать её или менять собственную роль |
 | Состояние аккаунта | Бан/удаление/смена роли/версия токена перепроверяются на каждом защищённом запросе (`AccountBanMiddleware`) |
 | Доказательства бана | Хранятся в PostgreSQL, не в публичном S3; скачивание только через `users.ban` с проверкой владельца |
+| Метрики | `/metrics` с опциональным bearer-токеном; gauges без пользовательских данных, labels ограничены известными значениями |
 | CORS | Только явный allow-list; в Production без него cross-origin запрещён |
 | Security headers | CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS при HTTPS |
 | IP за прокси | `X-Forwarded-*` принимаются только от доверенной сети nginx |

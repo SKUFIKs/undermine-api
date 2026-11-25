@@ -13,6 +13,7 @@ using UnderMineApi.DTOs;
 using UnderMineApi.Extensions;
 using UnderMineApi.Models;
 using UnderMineApi.Services;
+using UnderMineApi.Metrics;
 using UnderMineApi.Services.Security;
 
 namespace UnderMineApi.Controllers;
@@ -234,6 +235,8 @@ public class AdminModpackController : ControllerBase
         await _audit.LogAsync(
             actor, "import_modpack", "build", build.Id,
             $"{name} ({mcVersion}, {loaderType}), source {info.SourceType}", ct);
+
+        AppMetrics.BuildEvent("created", "modpack");
 
         return Ok(Map(build));
     }
