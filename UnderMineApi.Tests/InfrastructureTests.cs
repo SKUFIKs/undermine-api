@@ -91,6 +91,19 @@ public class S3PublicUrlTests
     }
 }
 
+public class S3ListedKeyTests
+{
+    [Theory]
+    [InlineData("builds%2Fabc%2Fmods%2F", true, "builds/abc/mods/")]
+    [InlineData("builds%2Fabc%2Fempty%20folder%2F", true, "builds/abc/empty folder/")]
+    [InlineData("builds/abc/file.jar", false, "builds/abc/file.jar")]
+    [InlineData("builds/abc/100%file.jar", false, "builds/abc/100%file.jar")]
+    public void NormalizeListedKey_DecodesDirectoryEntries(string key, bool isDirectory, string expected)
+    {
+        Assert.Equal(expected, S3StorageService.NormalizeListedKey(key, isDirectory));
+    }
+}
+
 public class S3BucketManagementTests
 {
     private sealed class DummyHttpClientFactory : IHttpClientFactory
