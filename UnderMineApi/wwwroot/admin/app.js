@@ -1664,6 +1664,7 @@ function buildDirectoryView() {
                 <button class="btn btn-sm" data-action="editor-new-directory">Create Directory</button>
                 <button class="btn btn-sm btn-primary" data-action="editor-upload">Upload</button>
                 <button class="btn btn-sm" data-action="editor-new-file">New File</button>
+                <span class="file-drop-hint">or drop files here</span>
                 <input type="file" id="editor-upload-input" multiple hidden>
             </div>
             <div id="editor-new-dir-row" class="editor-new-row" hidden>
@@ -1686,6 +1687,13 @@ function buildDirectoryView() {
                     </thead>
                     <tbody id="editor-dir-rows">${buildDirectoryRows()}</tbody>
                 </table>
+            </div>
+            <div id="editor-drop-overlay" class="editor-drop-overlay" hidden>
+                <div class="editor-drop-card">
+                    <strong>Drop files to upload</strong>
+                    <span>into <span id="editor-drop-path">${esc(editorCurrentPath || '/')}</span></span>
+                    <small>Multiple files are supported</small>
+                </div>
             </div>
         </div>`;
 }
@@ -2044,30 +2052,78 @@ async function downloadEditorFile(path = editorSelectedPath) {
     }
 }
 
-async function uploadEditorFiles(files) {
-    if (!files || !files.length || !editorBuild) return;
+let editorUploadInProgress = false;
 
-    let uploaded = 0;
+function setEditorDropOverlay(visible) {
+    const view = document.querySelector('.editor-directory-view');
+    if (!view) return;
 
-    for (const file of Array.from(files)) {
-        try {
-            const target = editorCurrentPath
-                ? `${editorCurrentPath}/${file.name}`
-                : file.name;
+    const overlay = document.getElementById('editor-drop-overlay');
+    if (!overlay) return;
 
-            const fd = new FormData();
-            fd.append('file', file);
-            fd.append('path', target);
-
-            await api(`/admin/builds/${editorBuild.id}/files`, { method: 'POST', body: fd });
-            uploaded++;
-        } catch (e) {
-            toast('error', `${file.name}: ${e.message}`);
-        }
+    if (visible) {
+        const path = document.getElementById('editor-drop-path');
+        if (path) path.textContent = editorCurrentPath || '/';
     }
 
-    const input = document.getElementById('editor-upload-input');
-    if (input) input.value = '';
+    overlay.hidden = !visible;
+    view.classList.toggle('drop-active', visible);
+}
+
+function editorDropTarget(event) {
+    return event.target instanceof Element
+        ? event.target.closest('.editor-directory-view')
+        : null;
+}
+
+function editorFileDropZone(event) {
+    const zone = editorDropTarget(event);
+    if (!zone || !editorBuild || editorSelectedPath) return null;
+
+    const types = event.dataTransfer?.types;
+    if (!types || !Array.from(types).includes('Files')) return null;
+
+    return zone;
+}
+
+async function uploadEditorFiles(files) {
+    if (!files || !files.length || !editorBuild) return;
+    if (editorUploadInProgress) {
+        const input = document.getElementById('editor-upload-input');
+        if (input) input.value = '';
+        toast('info', 'An upload is already in progress.');
+        return;
+    }
+
+    const list = Array.from(files);
+    const directory = editorCurrentPath;
+    let uploaded = 0;
+
+    editorUploadInProgress = true;
+    try {
+        toast('info', `Uploading ${list.length} file(s) to ${directory || '/'}...`);
+
+        for (const file of list) {
+            try {
+                const target = directory
+                    ? `${directory}/${file.name}`
+                    : file.name;
+
+                const fd = new FormData();
+                fd.append('file', file);
+                fd.append('path', target);
+
+                await api(`/admin/builds/${editorBuild.id}/files`, { method: 'POST', body: fd });
+                uploaded++;
+            } catch (e) {
+                toast('error', `${file.name}: ${e.message}`);
+            }
+        }
+    } finally {
+        editorUploadInProgress = false;
+        const input = document.getElementById('editor-upload-input');
+        if (input) input.value = '';
+    }
 
     if (uploaded) {
         await loadEditorDirectory(editorCurrentPath);
@@ -3642,6 +3698,48 @@ document.addEventListener('change', (e) => {
     if (e.target.id === 'editor-upload-input') {
         uploadEditorFiles(e.target.files);
     }
+});
+
+// Drag files from the desktop straight into the build editor's directory view.
+// Only the directory view is a drop target; the inline file editor keeps its normal
+// browser behaviour.
+document.addEventListener('dragenter', (event) => {
+    if (!editorFileDropZone(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    setEditorDropOverlay(true);
+});
+
+document.addEventListener('dragover', (event) => {
+    if (!editorFileDropZone(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('dragleave', (event) => {
+    const zone = editorDropTarget(event);
+    if (!zone) return;
+
+    const next = event.relatedTarget;
+    if (next instanceof Node && zone.contains(next)) return;
+
+    setEditorDropOverlay(false);
+});
+
+document.addEventListener('drop', (event) => {
+    const zone = editorDropTarget(event);
+    if (!zone || !editorBuild || editorSelectedPath) return;
+
+    event.preventDefault();
+    setEditorDropOverlay(false);
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!files.length) {
+        toast('error', 'No files were dropped. Drag files, not folders.');
+        return;
+    }
+
+    uploadEditorFiles(files);
 });
 
 // The row action menu is fixed-positioned to avoid being clipped by the file table.

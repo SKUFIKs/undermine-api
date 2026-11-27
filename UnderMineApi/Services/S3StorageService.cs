@@ -335,6 +335,15 @@ namespace UnderMineApi.Services
             CancellationToken ct = default) =>
             ListObjectsInternalAsync(prefix, recursive: false, ct);
 
+        /// <summary>
+        /// Minio 6.0.3 decodes Contents keys but leaves CommonPrefixes percent-encoded
+        /// (the SDK requests encoding-type=url). Directory entries must be decoded before
+        /// callers compare them with the plain prefix, otherwise empty folders disappear
+        /// from the build editor.
+        /// </summary>
+        internal static string NormalizeListedKey(string key, bool isDirectory) =>
+            isDirectory ? Uri.UnescapeDataString(key) : key;
+
         private async IAsyncEnumerable<S3ObjectInfo> ListObjectsInternalAsync(
             string prefix,
             bool recursive,
@@ -353,8 +362,10 @@ namespace UnderMineApi.Services
                     ? new DateTimeOffset(item.LastModifiedDateTime.Value.ToUniversalTime())
                     : null;
 
+                var key = NormalizeListedKey(item.Key, item.IsDir);
+
                 yield return new S3ObjectInfo(
-                    item.Key,
+                    key,
                     (long)item.Size,
                     lastModified,
                     item.IsDir);
